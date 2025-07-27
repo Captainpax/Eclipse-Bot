@@ -1,61 +1,56 @@
-// archipelago/archipelagoMessaging.mjs
-
-import logger from '../logger.mjs';
+// archipelagoMessaging.mjs
 
 /**
- * Handles incoming packets from the Archipelago server and routes them to appropriate Discord channels.
- * @param {object} packet - The raw packet received from the server.
- * @param {import('archipelago.js').Client} client - The connected Archipelago client.
- * @param {object} discordBot - The initialized DiscordBot instance with channel sending methods.
+ * Parses and routes Archipelago messages to the appropriate Discord channels.
+ *
+ * @param {object} packet - The message packet from the Archipelago server.
+ * @param {any} client - The connected Archipelago client.
+ * @param {any} discordBot - The connected Discord bot instance.
  */
-function handlePacket(packet, client, discordBot) {
-    if (!packet || typeof packet.cmd !== 'string') return;
+export function handlePacket(packet, client, discordBot) {
+    if (!packet) return;
 
-    const { cmd } = packet;
+    // Log general messages
+    if (packet.cmd === 'Print') {
+        const text = packet.text ?? '';
+        const lower = text.toLowerCase();
 
-    switch (cmd) {
-        case 'Print': {
-            const text = packet.text?.trim();
-            if (!text) return;
+        if (text.includes('has joined the game')) {
+            discordBot?.sendToLogChannel(`➕ ${text}`).catch(() => {});
+            discordBot?.sendToChatChannel(`➕ ${text}`).catch(() => {});
+        } else if (text.includes('has left the game')) {
+            discordBot?.sendToLogChannel(`➖ ${text}`).catch(() => {});
+            discordBot?.sendToChatChannel(`➖ ${text}`).catch(() => {});
+        } else if (lower.includes('trade')) {
+            discordBot?.sendToTradeChannel(`🔄 ${text}`).catch(() => {});
+        } else if (
+            lower.startsWith('hint') ||
+            lower.startsWith('hints') ||
+            lower.includes('hint points') ||
+            lower.includes('each hint') ||
+            lower.startsWith('no hints')
+        ) {
+            discordBot?.sendToHintChannel(`💡 ${text}`).catch(() => {});
+        } else if (
+            lower.includes(' found ') ||
+            lower.includes(' sent ') ||
+            lower.includes(' received ') ||
+            lower.startsWith('received ') ||
+            lower.startsWith('you got')
+        ) {
+            discordBot?.sendToLogChannel(`✅ ${text}`).catch(() => {});
+        } else {
+            discordBot?.sendToChatChannel(`💬 ${text}`).catch(() => {});
+        }
+    }
 
-            const lower = text.toLowerCase();
-
-            if (text.includes('has joined the game')) {
-                discordBot?.sendToLogChannel(`➕ ${text}`);
-            } else if (text.includes('has left the game')) {
-                discordBot?.sendToLogChannel(`➖ ${text}`);
-            } else if (lower.includes('trade')) {
-                discordBot?.sendToTradeChannel(`🔄 ${text}`);
-            } else if (
-                lower.startsWith('hint') || lower.startsWith('hints') ||
-                lower.includes('hint points') || lower.includes('each hint') ||
-                lower.startsWith('no hints')
-            ) {
-                discordBot?.sendToHintChannel(`💡 ${text}`);
-            } else if (
-                lower.includes(' found ') || lower.includes(' sent ') ||
-                lower.includes(' received ') || lower.startsWith('received ') ||
-                lower.startsWith('you got')
-            ) {
-                discordBot?.sendToLogChannel(`✅ ${text}`);
-            } else {
-                discordBot?.sendToChatChannel(`💬 ${text}`);
+    // Handle multiple messages in one packet
+    if (packet.cmd === 'PrintJSON' && Array.isArray(packet.data)) {
+        packet.data.forEach((entry) => {
+            if (typeof entry.text === 'string') {
+                const text = entry.text;
+                discordBot?.sendToChatChannel(`💬 ${text}`).catch(() => {});
             }
-            break;
-        }
-
-        case 'RoomInfo': {
-            const players = packet.players || [];
-            players.forEach(player => {
-                discordBot?.sendToLogChannel(`🟢 Player joined: ${player.name}`);
-            });
-            break;
-        }
-
-        default:
-            logger.debug(`[Archipelago] Unhandled packet type: ${cmd}`);
-            break;
+        });
     }
 }
-
-export { handlePacket };

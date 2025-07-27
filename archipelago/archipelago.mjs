@@ -72,37 +72,6 @@ class ArchipelagoBot {
     }
 
     /**
-     * Waits for RoomInfo confirmation or times out.
-     * @param {number} timeoutMs
-     * @returns {Promise<boolean>}
-     */
-    async waitUntilConnected(timeoutMs = 5000) {
-        if (this.connected) return true;
-
-        logger.debug('[Archipelago] Waiting for RoomInfo...');
-
-        return new Promise((resolve) => {
-            const timeout = setTimeout(() => {
-                logger.warn('[Archipelago] ❌ Timed out waiting for RoomInfo');
-                resolve(false);
-            }, timeoutMs);
-
-            const onPacket = (packet) => {
-                logger.debug('[Archipelago] waitUntilConnected saw packet:', JSON.stringify(packet));
-                if (packet?.cmd === 'RoomInfo') {
-                    this.connected = true;
-                    clearTimeout(timeout);
-                    logger.debug('[Archipelago] ✅ RoomInfo received — connection established');
-                    this.client.__emitter.off('PacketReceived', onPacket);
-                    resolve(true);
-                }
-            };
-
-            this.client.__emitter.on('PacketReceived', onPacket);
-        });
-    }
-
-    /**
      * Sends a chat message to the Archipelago server.
      * @param {string} message
      */

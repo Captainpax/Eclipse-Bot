@@ -76,6 +76,7 @@ async function main() {
     try {
         logger.info('🌐 Connecting to Archipelago...');
         await apBot.connect(ARCHIPELAGO_SERVER, ARCHIPELAGO_SLOT, ARCHIPELAGO_PASSWORD);
+
         logger.success('🛰️ Archipelago connection confirmed.');
     } catch (err) {
         logger.error('❌ Archipelago connection failed.');
