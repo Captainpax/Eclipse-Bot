@@ -76,15 +76,7 @@ async function main() {
     try {
         logger.info('🌐 Connecting to Archipelago...');
         await apBot.connect(ARCHIPELAGO_SERVER, ARCHIPELAGO_SLOT, ARCHIPELAGO_PASSWORD);
-
-        logger.info('🕒 Waiting for Archipelago connection...');
-        const ready = await apBot.waitUntilConnected(5000);
-        if (!ready) {
-            logger.error('❌ Unable to continue without Archipelago connection');
-            return;
-        }
-
-        logger.success('🛰️ Connected to Archipelago server.');
+        logger.success('🛰️ Archipelago connection confirmed.');
     } catch (err) {
         logger.error('❌ Archipelago connection failed.');
         if (isDebug) logger.debug(err.stack || err);

@@ -15,6 +15,7 @@ export async function initArchipelagoConnectionAndListen(server, slotName, passw
     logger.info(`🔌 Connecting to Archipelago at ${server} as "${slotName}"`);
 
     const client = new Client();
+    let connected = false;
 
     await client.login(server, slotName, password, {
         tags: ['APBot', 'TextOnly'],
@@ -27,7 +28,18 @@ export async function initArchipelagoConnectionAndListen(server, slotName, passw
         throw new Error('❌ No usable event emitter found on Archipelago client');
     }
 
-    /** @type {any} */ (emitter).on('PacketReceived', onPacket);
+    emitter.on('PacketReceived', (packet) => {
+        if (packet?.cmd === 'RoomInfo') {
+            connected = true;
+            logger.debug('[Archipelago] ✅ RoomInfo received — connection confirmed');
+        }
 
-    return { client, emitter, connected: false };
+        try {
+            onPacket(packet);
+        } catch (err) {
+            logger.error('[Archipelago] Error in onPacket handler:', err);
+        }
+    });
+
+    return { client, emitter, connected };
 }
