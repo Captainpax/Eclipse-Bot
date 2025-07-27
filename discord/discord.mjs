@@ -1,9 +1,4 @@
-/*
- * discord/discord.mjs
- *
- * Central DiscordBot manager that orchestrates command and message handling via modular components.
- * Uses Discord.js v14+ with separated command and messaging logic for maintainability.
- */
+// discord/discord.mjs
 
 import {
   Client,
@@ -12,17 +7,25 @@ import {
   Routes,
   Events
 } from 'discord.js';
+
 import logger from '../logger.mjs';
 import { registerDiscordEvents } from './discordUtilities.mjs';
 import { getSlashCommands, handleInteraction } from './discordCommands.mjs';
 import DiscordMessenger from './discordMessaging.mjs';
 
 /**
- * DiscordBot wraps the Discord.js client to support slash commands and chat bridging.
+ * DiscordBot wraps the Discord.js client to support slash commands and bridging.
  */
 class DiscordBot {
-  constructor() {
-    /** @type {import('discord.js').Client} */
+  /**
+   * @param {{
+   *   chatChannelId: string,
+   *   tradeChannelId: string,
+   *   hintChannelId: string,
+   *   logChannelId: string
+   * }} channelIds
+   */
+  constructor(channelIds) {
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -31,34 +34,49 @@ class DiscordBot {
       ],
     });
 
+    this.channelIds = channelIds;
     this.messenger = null;
+    this.apBot = null;
 
     registerDiscordEvents(this.client);
   }
 
   /**
-   * Starts the Discord bot client and sets up commands and interactions.
-   * @param {string} token - Bot token
-   * @param {string} channelId - Target channel ID for message relaying
+   * Starts the Discord bot and registers slash commands.
+   * @param {string} token - Discord bot token
    */
-  async start(token, channelId) {
+  async start(token) {
     if (!token) throw new Error('Discord token is required to start the bot');
 
     await this.client.login(token);
+
+    // Wait until client is ready before proceeding
+    await new Promise(resolve => {
+      if (this.client.isReady()) return resolve();
+      this.client.once('ready', resolve);
+    });
+
     await this.registerSlashCommands(token);
 
-    this.messenger = new DiscordMessenger(this.client, channelId);
+    // Setup message handler
+    this.messenger = new DiscordMessenger(this.client, this.channelIds);
+    this.messenger.registerInboundHandler((text) => {
+      if (this.apBot) this.apBot.sendChat?.(text);
+    });
 
     this.client.on(Events.InteractionCreate, async (interaction) => {
-      if (interaction.isChatInputCommand()) {
+      if (!interaction.isChatInputCommand()) return;
+      try {
         await handleInteraction(interaction);
+      } catch (err) {
+        logger.error('[DiscordBot] Error handling interaction:', err);
       }
     });
   }
 
   /**
-   * Registers slash commands across all guilds the bot is in.
-   * @param {string} token - Bot token for REST auth
+   * Registers slash commands for all guilds.
+   * @param {string} token - Discord token
    */
   async registerSlashCommands(token) {
     const commands = getSlashCommands();
@@ -75,30 +93,48 @@ class DiscordBot {
         logger.debug(`Registered slash commands for guild ${guildId}`);
       }
     } catch (err) {
-      logger.error('[DiscordBot.registerSlashCommands] Failed to register slash commands:', err);
+      logger.error('[DiscordBot] Slash command registration failed:', err);
     }
   }
 
   /**
-   * Sends a message to the configured outbound channel via DiscordMessenger.
-   * @param {string} text - Message to send
+   * Sets the Archipelago bot reference.
+   * @param {object} apBot
    */
-  async sendMessage(text) {
-    if (!this.messenger) {
-      throw new Error('DiscordMessenger is not initialized');
-    }
-    await this.messenger.sendOutbound(text);
+  setArchipelagoBot(apBot) {
+    this.apBot = apBot;
   }
 
   /**
-   * Registers an inbound message handler for relaying messages (e.g., to Archipelago).
-   * @param {(text: string) => void} callback
+   * Sends a message to the chat channel.
+   * @param {string} text
    */
-  onMessage(callback) {
-    if (!this.messenger) {
-      throw new Error('DiscordMessenger is not initialized');
-    }
-    this.messenger.registerInboundHandler(callback);
+  async sendToChatChannel(text) {
+    return this.messenger?.sendChat(text);
+  }
+
+  /**
+   * Sends a message to the trade channel.
+   * @param {string} text
+   */
+  async sendToTradeChannel(text) {
+    return this.messenger?.sendTrade(text);
+  }
+
+  /**
+   * Sends a message to the hint channel.
+   * @param {string} text
+   */
+  async sendToHintChannel(text) {
+    return this.messenger?.sendHint(text);
+  }
+
+  /**
+   * Sends a message to the log channel.
+   * @param {string} text
+   */
+  async sendToLogChannel(text) {
+    return this.messenger?.sendLog(text);
   }
 }
 

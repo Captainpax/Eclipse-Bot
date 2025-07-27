@@ -15,17 +15,6 @@ const env = Object.fromEntries(
 
 /**
  * Destructured environment variables with defaults
- * @type {{
- *   DISCORD_TOKEN: string,
- *   DISCORD_CHAT_CHANNEL_ID: string,
- *   DISCORD_TRADE_CHANNEL_ID: string,
- *   DISCORD_HINT_CHANNEL_ID: string,
- *   DISCORD_LOG_CHANNEL_ID: string,
- *   ARCHIPELAGO_SERVER: string,
- *   ARCHIPELAGO_SLOT: string,
- *   ARCHIPELAGO_PASSWORD?: string,
- *   LOG_LEVEL: string
- * }}
  */
 const {
     DISCORD_TOKEN,
@@ -39,28 +28,28 @@ const {
     LOG_LEVEL = 'low',
 } = env;
 
-/** @type {boolean} */
 const isDebug = LOG_LEVEL.toLowerCase() === 'debug';
 
 /**
- * Main application entry point that initializes and connects the Discord and Archipelago bots
- * @async
- * @returns {Promise<void>}
+ * Application startup
  */
 async function main() {
-    logger.debug('Loading environment configuration');
-    if (isDebug) logger.debug('Resolved environment:', env);
+    logger.info('🚀 Starting Eclipse-Bot...');
 
-    // Validate required config
-    if (!DISCORD_TOKEN) return logger.error('Missing DISCORD_TOKEN in environment');
+    if (isDebug) {
+        logger.debug('🌐 Environment config:', env);
+    }
+
+    // ===== Validate Environment =====
+    if (!DISCORD_TOKEN) return logger.error('❌ Missing DISCORD_TOKEN in environment');
     if (!DISCORD_CHAT_CHANNEL_ID || !DISCORD_TRADE_CHANNEL_ID || !DISCORD_HINT_CHANNEL_ID || !DISCORD_LOG_CHANNEL_ID) {
-        return logger.error('Missing one or more required DISCORD_*_CHANNEL_IDs in environment');
+        return logger.error('❌ Missing one or more required DISCORD_*_CHANNEL_IDs in environment');
     }
     if (!ARCHIPELAGO_SERVER || !ARCHIPELAGO_SLOT) {
-        return logger.error('Missing ARCHIPELAGO_SERVER or ARCHIPELAGO_SLOT in environment');
+        return logger.error('❌ Missing ARCHIPELAGO_SERVER or ARCHIPELAGO_SLOT in environment');
     }
 
-    // Initialize bots
+    // ===== Initialize Bot Instances =====
     const discordBot = new DiscordBot({
         chatChannelId: DISCORD_CHAT_CHANNEL_ID,
         tradeChannelId: DISCORD_TRADE_CHANNEL_ID,
@@ -69,38 +58,44 @@ async function main() {
     });
 
     const apBot = new ArchipelagoBot();
-    apBot.setDiscordBot(discordBot); // inject for packet routing
-    discordBot.apBot = apBot;        // allow Discord commands to use apBot
+    apBot.setDiscordBot(discordBot); // Inject for packet routing
+    discordBot.apBot = apBot;        // Inject for Discord->AP command support
 
+    // ===== Start Discord FIRST =====
     try {
-        logger.info('Connecting to Archipelago server...');
+        logger.info('🤖 Connecting to Discord...');
+        await discordBot.start(DISCORD_TOKEN);
+        logger.success('✅ Discord bot connected.');
+    } catch (err) {
+        logger.error('❌ Discord connection failed.');
+        if (isDebug) logger.debug(err.stack || err);
+        return;
+    }
+
+    // ===== Start Archipelago AFTER Discord =====
+    try {
+        logger.info('🌐 Connecting to Archipelago...');
         await apBot.connect(ARCHIPELAGO_SERVER, ARCHIPELAGO_SLOT, ARCHIPELAGO_PASSWORD);
 
-        logger.info('Waiting for Archipelago to send RoomInfo...');
+        logger.info('🕒 Waiting for Archipelago connection...');
         const ready = await apBot.waitUntilConnected(5000);
         if (!ready) {
-            logger.error('Unable to continue without Archipelago connection');
+            logger.error('❌ Unable to continue without Archipelago connection');
             return;
         }
+
+        logger.success('🛰️ Connected to Archipelago server.');
     } catch (err) {
-        logger.error('Unable to continue without Archipelago connection');
+        logger.error('❌ Archipelago connection failed.');
         if (isDebug) logger.debug(err.stack || err);
         return;
     }
 
-    try {
-        logger.info('Connecting to Discord...');
-        await discordBot.start(DISCORD_TOKEN);
-    } catch (err) {
-        logger.error('Unable to continue without Discord connection');
-        if (isDebug) logger.debug(err.stack || err);
-        return;
-    }
-
-    logger.success('✅ Eclipse bot is up and running!');
+    // ===== All Systems Go =====
+    logger.success('🌙 Eclipse-Bot fully operational!');
 }
 
 main().catch((err) => {
-    logger.error('Fatal error in main execution:', err);
+    logger.error('🔥 Fatal error in main execution:', err);
     if (isDebug) logger.debug(err.stack || err);
 });
