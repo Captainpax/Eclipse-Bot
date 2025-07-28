@@ -1,29 +1,64 @@
 // discord/discordMessaging.mjs
 
+import { EmbedBuilder } from 'discord.js';
 import logger from '../logger.mjs';
 
 /**
- * Handles Discord message relaying between Discord and external services like Archipelago.
- * Allows separate channels for chat, trades, hints, and logs.
+ * Handles Discord message relaying and embed sending for Archipelago interactions.
+ * Automatically routes chat, trade, hint, and log messages to their respective channels.
  */
 class DiscordMessenger {
     /**
-     * @param {import('discord.js').Client} client - The connected Discord client
+     * @param {import('discord.js').Client} client - The connected Discord.js client
      * @param {{
      *   chatChannelId: string,
      *   tradeChannelId: string,
      *   hintChannelId: string,
      *   logChannelId: string
-     * }} channelMap
+     * }} channelMap - Channel IDs for routing messages
      */
     constructor(client, channelMap) {
         this.client = client;
         this.channelMap = channelMap;
         this.inboundHandler = null;
+
+        /**
+         * Optional external user mapping function to resolve usernames to Discord IDs.
+         * @type {(text: string) => string[] | Promise<string[]>}
+         */
+        this.getUserIdsFromNames = null;
     }
 
     /**
-     * Registers a listener for messages from the chat channel to send to Archipelago.
+     * Hook for outbound embed sending with optional user pings.
+     *
+     * @param {'chat'|'trade'|'hint'|'log'} channelKey
+     * @param {EmbedBuilder} embed
+     * @param {string[]} [userIdsToPing]
+     */
+    async sendEmbed(channelKey, embed, userIdsToPing = []) {
+        const channelId = this.channelMap[`${channelKey}ChannelId`];
+        if (!channelId) return;
+
+        try {
+            const channel = await this.client.channels.fetch(channelId);
+            if (!channel || !channel.isTextBased()) {
+                throw new Error(`Channel ${channelId} is not text-based`);
+            }
+
+            const content = userIdsToPing.length
+                ? userIdsToPing.map(id => `<@${id}>`).join(' ')
+                : undefined;
+
+            await channel.send({ embeds: [embed], content });
+        } catch (err) {
+            logger.error(`[DiscordMessenger] Failed to send embed to ${channelKey} channel:`, err);
+        }
+    }
+
+    /**
+     * Registers an inbound chat message listener from Discord to Archipelago.
+     * Only messages in the chat channel are handled.
      * @param {(text: string) => void} callback
      */
     registerInboundHandler(callback) {
@@ -42,54 +77,46 @@ class DiscordMessenger {
         });
     }
 
-    /**
-     * Sends a chat message to the chat channel.
-     * @param {string} text
-     */
+    // ===== Shortcut helpers for raw messages (if needed outside of embed) =====
+
+    /** @param {string} text */
     async sendChat(text) {
-        return this.sendToChannel(this.channelMap.chatChannelId, text);
+        return this.sendRaw('chat', text);
     }
 
-    /**
-     * Sends a trade message to the trade channel.
-     * @param {string} text
-     */
+    /** @param {string} text */
     async sendTrade(text) {
-        return this.sendToChannel(this.channelMap.tradeChannelId, text);
+        return this.sendRaw('trade', text);
     }
 
-    /**
-     * Sends a hint message to the hint channel.
-     * @param {string} text
-     */
+    /** @param {string} text */
     async sendHint(text) {
-        return this.sendToChannel(this.channelMap.hintChannelId, text);
+        return this.sendRaw('hint', text);
     }
 
-    /**
-     * Sends a log/status message to the log channel.
-     * @param {string} text
-     */
+    /** @param {string} text */
     async sendLog(text) {
-        return this.sendToChannel(this.channelMap.logChannelId, text);
+        return this.sendRaw('log', text);
     }
 
     /**
-     * Internal utility to send a message to a specific channel ID.
-     * @param {string} channelId
+     * Internal utility to send a plain text message to a named channel.
+     * @param {'chat'|'trade'|'hint'|'log'} channelKey
      * @param {string} text
      */
-    async sendToChannel(channelId, text) {
+    async sendRaw(channelKey, text) {
+        const channelId = this.channelMap[`${channelKey}ChannelId`];
         if (!channelId) return;
 
         try {
             const channel = await this.client.channels.fetch(channelId);
             if (!channel || !channel.isTextBased()) {
-                throw new Error(`Channel ${channelId} is not text-based or could not be fetched`);
+                throw new Error(`Channel ${channelId} is not text-based`);
             }
+
             await channel.send({ content: text });
         } catch (err) {
-            logger.error(`[DiscordMessenger] Failed to send message to channel ${channelId}:`, err);
+            logger.error(`[DiscordMessenger] Failed to send message to ${channelKey} channel:`, err);
         }
     }
 }

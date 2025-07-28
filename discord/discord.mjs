@@ -136,6 +136,34 @@ class DiscordBot {
   async sendToLogChannel(text) {
     return this.messenger?.sendLog(text);
   }
+
+  /**
+   * Sends an embed to a named channel type (chat, trade, hint, log).
+   * @param {"chat"|"trade"|"hint"|"log"} type
+   * @param {import('discord.js').EmbedBuilder} embed
+   * @param {string[]} [userIds=[]] - Optional user IDs to ping
+   */
+  async sendEmbed(type, embed, userIds = []) {
+    return this.messenger?.sendEmbed(type, embed, userIds);
+  }
+
+  /**
+   * Resolves Discord user IDs from message text by name.
+   * @param {string} message
+   * @returns {string[]} user ID list to ping
+   */
+  getUserIdsFromNames(message) {
+    const userMap = {
+      'CaptainPax': '123456789012345678',
+      'Pax Spire': '234567890123456789',
+      'Pax Poke': '345678901234567890',
+      // Add more mappings
+    };
+
+    return Object.entries(userMap)
+        .filter(([name]) => message.includes(name))
+        .map(([, id]) => id);
+  }
 }
 
 export default DiscordBot;
