@@ -1,21 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
-    <data-source source="LOCAL" name="identifier.sqlite" uuid="62ce5a08-69d6-4a6f-8b1b-329097cac02b">
+    <data-source source="LOCAL" name="eclipse.db" uuid="f66726c9-f60f-4648-9cd8-aae0ea1b2e04">
       <driver-ref>sqlite.xerial</driver-ref>
       <synchronize>true</synchronize>
+      <remarks>maindbfile</remarks>
       <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
-      <jdbc-url>jdbc:sqlite:identifier.sqlite</jdbc-url>
+      <jdbc-url>jdbc:sqlite:eclipse.db</jdbc-url>
       <jdbc-additional-properties>
         <property name="com.intellij.clouds.kubernetes.db.enabled" value="false" />
       </jdbc-additional-properties>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
-    <data-source source="LOCAL" name="discordUsers" uuid="84dcf53e-59db-4e20-af54-66a26013697e">
+    <data-source source="LOCAL" name="eclipse" uuid="9a3460d7-116a-4d93-b584-fac636d7486b">
       <driver-ref>sqlite.xerial</driver-ref>
       <synchronize>true</synchronize>
       <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
-      <jdbc-url>jdbc:sqlite:C:\Users\nohea\IdeaProjects\Eclipse-Bot\discordUsers.db</jdbc-url>
+      <jdbc-url>jdbc:sqlite:C:\Users\nohea\IdeaProjects\Eclipse-Bot\eclipse.db</jdbc-url>
       <jdbc-additional-properties>
         <property name="com.intellij.clouds.kubernetes.db.enabled" value="false" />
       </jdbc-additional-properties>
