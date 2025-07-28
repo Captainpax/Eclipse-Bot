@@ -2,6 +2,7 @@
 
 import { SlashCommandBuilder } from 'discord.js';
 import { linkSlot, getLinkedSlots, initUserDB } from './discordUsers.mjs';
+import { getClient } from '../archipelago/archipelago.mjs';
 
 // Ensure DB is initialized
 initUserDB();
@@ -14,13 +15,10 @@ const commands = [
         data: new SlashCommandBuilder()
             .setName('ping')
             .setDescription('Replies with Pong!'),
-        /**
-         * @param {import('discord.js').ChatInputCommandInteraction} interaction
-         */
         async execute(interaction) {
             await interaction.reply({
                 content: '🏓 Pong!',
-                flags: 1 << 6 // Use FLAGS.Ephemeral manually to suppress deprecation warning
+                flags: 1 << 6 // Ephemeral
             });
         }
     },
@@ -33,9 +31,6 @@ const commands = [
                     .setDescription('The Archipelago slot name to link')
                     .setRequired(true)
             ),
-        /**
-         * @param {import('discord.js').ChatInputCommandInteraction} interaction
-         */
         async execute(interaction) {
             const userId = interaction.user.id;
             const slot = interaction.options.getString('slot');
@@ -57,6 +52,35 @@ const commands = [
                     flags: 1 << 6
                 });
             }
+        }
+    },
+    {
+        data: new SlashCommandBuilder()
+            .setName('say')
+            .setDescription('Send a message to Archipelago chat')
+            .addStringOption(option =>
+                option.setName('message')
+                    .setDescription('Message to send to Archipelago')
+                    .setRequired(true)
+            ),
+        async execute(interaction) {
+            const client = getClient();
+            const message = interaction.options.getString('message');
+
+            if (!client || !client.socket || client.socket.readyState !== 1) {
+                await interaction.reply({
+                    content: '❌ Archipelago is not connected.',
+                    flags: 1 << 6
+                });
+                return;
+            }
+
+            client.send({ cmd: 'Say', text: message });
+
+            await interaction.reply({
+                content: `✅ Sent to Archipelago:\n> ${message}`,
+                flags: 1 << 6
+            });
         }
     }
 ];

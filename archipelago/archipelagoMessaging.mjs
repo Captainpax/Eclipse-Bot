@@ -144,21 +144,34 @@ export async function handlePacket(packet, client, discordBot) {
 
     // ======== Handle PrintJSON packets ========
     if (packet.cmd === 'PrintJSON' && Array.isArray(packet.data)) {
-        const combined = packet.data.map(entry => entry.text).filter(Boolean).join('\n');
-        if (!combined || combined.includes('Now that you are connected, you can use !help')) return;
+        const parts = packet.data
+            .map(entry => typeof entry.text === 'string' ? entry.text : '')
+            .filter(Boolean);
 
-        const hash = simpleHash(combined);
-        if (hash === lastMessageHash) return;
-        lastMessageHash = hash;
+        const combined = parts.join(' ').trim();
+        if (!combined || combined.includes('Now that you are connected, you can use !help')) return;
 
         const userIds = await getUserMentions(combined);
         const pingLine = userIds.map(id => `<@${id}>`).join(' ');
 
         const embed = new EmbedBuilder()
-            .setTitle('💬 Message')
             .setDescription(combined)
-            .setColor(0xaaaaaa);
+            .setColor(0xb197fc);
 
+        // 🔄 Check for trade language
+        const lower = combined.toLowerCase();
+        if (
+            lower.includes(' sent ') &&
+            lower.includes(' to ')
+        ) {
+            embed.setTitle('🔄 Trade Event');
+            if (pingLine) embed.addFields({ name: 'Players', value: pingLine, inline: false });
+            discordBot.sendEmbed('trade', embed);
+            return;
+        }
+
+        // Fallback for other messages
+        embed.setTitle('📩 Message Event');
         if (pingLine) embed.addFields({ name: 'Mentioned', value: pingLine, inline: false });
 
         discordBot.sendEmbed('chat', embed);

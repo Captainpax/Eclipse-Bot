@@ -8,7 +8,7 @@ import { initArchipelagoConnectionAndListen } from './archipelagoConnection.mjs'
 /**
  * ArchipelagoBot handles connection and communication with an Archipelago server.
  */
-class ArchipelagoBot {
+export class ArchipelagoBot {
     constructor() {
         /** @type {any} */
         this.client = null;
@@ -89,4 +89,13 @@ class ArchipelagoBot {
     }
 }
 
-export default ArchipelagoBot;
+// Optional: singleton instance (can be removed if unused)
+export const archipelagoInstance = new ArchipelagoBot();
+
+/**
+ * Exported getter for internal use in commands or other modules
+ * @returns {ArchipelagoBot}
+ */
+export function getClient() {
+    return archipelagoInstance;
+}

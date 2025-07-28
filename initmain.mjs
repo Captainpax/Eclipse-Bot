@@ -3,8 +3,9 @@
 import 'dotenv/config';
 import logger from './logger.mjs';
 import DiscordBot from './discord/discord.mjs';
-import ArchipelagoBot from './archipelago/archipelago.mjs';
+import { ArchipelagoBot } from './archipelago/archipelago.mjs';
 
+const apBot = new ArchipelagoBot();
 /**
  * Environment variables object with trimmed values
  * @type {Object.<string, string>}
@@ -57,7 +58,6 @@ async function main() {
         logChannelId: DISCORD_LOG_CHANNEL_ID,
     });
 
-    const apBot = new ArchipelagoBot();
     apBot.setDiscordBot(discordBot); // Inject for packet routing
     discordBot.apBot = apBot;        // Inject for Discord->AP command support
 
