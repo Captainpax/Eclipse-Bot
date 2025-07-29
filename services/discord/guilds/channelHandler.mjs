@@ -1,6 +1,3 @@
-// 📁 services/discord/guilds/channelHandler.mjs
-
-import {runFirstTimeSetup} from './setup.mjs';
 import {getGuildConfig, getUser, saveGuildConfig} from '../users/usersHandler.mjs';
 import {
     createConsoleChannel,
@@ -9,7 +6,7 @@ import {
     createWaitingRoomChannel
 } from './channels/index.mjs';
 import {isAdminOrMod} from '../users/roleHandler.mjs';
-import * as logger from '../../../system/log/logHandler.mjs';
+import logger from '../../../system/log/logHandler.mjs';
 
 // In-memory signup queue: guildId → [userId, ...]
 const signupQueue = {};
@@ -26,16 +23,16 @@ export class ChannelMessageRouter {
         if (message.author.bot || !message.guild) return;
 
         const guildId = message.guild.id;
-        let config = await getGuildConfig(guildId);
-
+        const config = await getGuildConfig(guildId);
         if (!config) {
-            logger.info(`🔧 No guild config for ${guildId}. Launching first-time setup...`);
-            await runFirstTimeSetup(client);
-            config = await getGuildConfig(guildId);
-            if (!config) {
-                logger.error(`❌ Setup failed or incomplete for guild ${guildId}.`);
-                return;
-            }
+            logger.error(`❌ Missing config for guild ${guildId}. Skipping message handling.`);
+            return;
+        }
+
+        // 🔒 Ignore messages outside the designated category
+        const channel = message.channel;
+        if (!channel || channel.parentId !== config.categoryId) {
+            return; // silently ignore
         }
 
         // Bootstrap mandatory channels if needed
@@ -87,6 +84,16 @@ export class ChannelMessageRouter {
                 await createRemainingChannels(client, config);
                 logger.success(`✅ Created remaining game channels in ${message.guild.name}`);
                 return message.reply('✅ Game channels have been created!');
+            }
+
+            if (content === '!list') {
+                const queue = getSignupQueue(guildId);
+                if (queue.length === 0) {
+                    return message.reply('📭 The signup queue is currently empty.');
+                }
+
+                const list = queue.map((id, i) => `\n> **${i + 1}.** <@${id}>`).join('');
+                return message.reply({content: `📋 **Signup Queue:**${list}`, allowedMentions: {parse: []}});
             }
         }
     }
