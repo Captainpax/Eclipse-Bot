@@ -1,11 +1,11 @@
-CREATE TABLE user_links
+CREATE TABLE IF NOT EXISTS linked_users
 (
-    discord_id TEXT PRIMARY KEY,
-    ap_slot    TEXT,
-    roles      TEXT
+    user_id     TEXT PRIMARY KEY,
+    player_name TEXT,
+    roles       TEXT
 );
 
-CREATE TABLE messages
+CREATE TABLE IF NOT EXISTS messages
 (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp INTEGER,
@@ -15,7 +15,7 @@ CREATE TABLE messages
     sender    TEXT
 );
 
-CREATE TABLE received_items
+CREATE TABLE IF NOT EXISTS received_items
 (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp INTEGER,

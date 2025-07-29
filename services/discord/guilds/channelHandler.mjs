@@ -1,33 +1,41 @@
-import path from 'path';
-import fs from 'fs';
-import {REST} from 'discord.js';
-import {Routes} from 'discord-api-types/v10';
+// 📁 services/discord/guilds/channelHandler.mjs
+
+import {runFirstTimeSetup} from './setup.mjs';
 import {getGuildConfig, getUser, saveGuildConfig} from '../users/usersHandler.mjs';
 import {
     createConsoleChannel,
     createLogsChannel,
     createRemainingChannels,
     createWaitingRoomChannel
-} from '../guilds/channels/index.mjs';
+} from './channels/index.mjs';
 import {isAdminOrMod} from '../users/roleHandler.mjs';
-import logger from '../../../system/log/logHandler.mjs';
+import * as logger from '../../../system/log/logHandler.mjs';
 
 // In-memory signup queue: guildId → [userId, ...]
 const signupQueue = {};
 
 /**
  * Routes incoming Discord messages (non-slash commands).
+ *
+ * @param {import('discord.js').Message} message
+ * @param {Object} env
+ * @param {import('discord.js').Client} client
  */
 export class ChannelMessageRouter {
     static async handle(message, env, client) {
         if (message.author.bot || !message.guild) return;
 
         const guildId = message.guild.id;
-        const config = await getGuildConfig(guildId);
+        let config = await getGuildConfig(guildId);
 
         if (!config) {
-            logger.error(`❌ Missing config for guild ${guildId}. Skipping message handling.`);
-            return;
+            logger.info(`🔧 No guild config for ${guildId}. Launching first-time setup...`);
+            await runFirstTimeSetup(client);
+            config = await getGuildConfig(guildId);
+            if (!config) {
+                logger.error(`❌ Setup failed or incomplete for guild ${guildId}.`);
+                return;
+            }
         }
 
         // Bootstrap mandatory channels if needed
@@ -80,23 +88,16 @@ export class ChannelMessageRouter {
                 logger.success(`✅ Created remaining game channels in ${message.guild.name}`);
                 return message.reply('✅ Game channels have been created!');
             }
-
-            if (content === '!list') {
-                const queue = getSignupQueue(guildId);
-                if (queue.length === 0) {
-                    return message.reply('📭 The signup queue is currently empty.');
-                }
-
-                const list = queue.map((id, i) => `\n> **${i + 1}.** <@${id}>`).join('');
-                return message.reply({content: `📋 **Signup Queue:**${list}`, allowedMentions: {parse: []}});
-            }
         }
     }
 }
 
-
 /**
  * Adds a user to the signup queue for a guild.
+ *
+ * @param {string} guildId
+ * @param {string} userId
+ * @returns {'already'|'added'}
  */
 export function addToSignupQueue(guildId, userId) {
     signupQueue[guildId] ??= [];
@@ -107,58 +108,9 @@ export function addToSignupQueue(guildId, userId) {
 
 /**
  * Gets the current signup queue for a guild.
+ * @param {string} guildId
+ * @returns {string[]}
  */
 export function getSignupQueue(guildId) {
     return signupQueue[guildId] ?? [];
-}
-
-/**
- * Handles registering slash commands as a class.
- */
-export class registerCommandHandlers {
-    constructor(client, token, clientId, guildId) {
-        this.client = client;
-        this.token = token;
-        this.clientId = clientId;
-        this.guildId = guildId;
-        this.commands = new Map();
-    }
-
-    async register() {
-        const commandsDir = path.resolve('./services/discord/commands');
-        const commandList = [];
-
-        const readCommands = async (dir) => {
-            const entries = fs.readdirSync(dir, {withFileTypes: true});
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    await readCommands(fullPath);
-                } else if (entry.name.endsWith('.mjs')) {
-                    const cmdModule = await import(`file://${fullPath}`);
-                    if (cmdModule?.data && cmdModule?.execute) {
-                        commandList.push(cmdModule.data.toJSON());
-                        this.commands.set(cmdModule.data.name, cmdModule);
-                    }
-                }
-            }
-        };
-
-        readCommands(commandsDir);
-
-        this.client.commands = this.commands;
-
-        const rest = new REST({version: '10'}).setToken(this.token);
-
-        try {
-            logger.info(`📡 Registering ${commandList.length} slash command(s)...`);
-            await rest.put(
-                Routes.applicationGuildCommands(this.clientId, this.guildId),
-                {body: commandList}
-            );
-            logger.success(`✅ Slash commands registered successfully.`);
-        } catch (error) {
-            logger.error(`❌ Failed to register commands: ${error}`);
-        }
-    }
 }

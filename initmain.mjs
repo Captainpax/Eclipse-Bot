@@ -5,41 +5,36 @@
 import 'dotenv/config.js';
 import logger from './system/log/logHandler.mjs';
 import initDiscord from './services/discord/initDiscord.mjs';
-import initArchipelago from './services/archipelago/initArchipelago.mjs';
 
 // ──────────────── ENV LOADING ────────────────
+
+/** @type {Object<string, string>} Trimmed env vars */
 const env = Object.fromEntries(
     Object.entries(process.env).map(([k, v]) => [k, v?.trim()])
 );
 
-// Required ENV vars
-const REQUIRED_VARS = [
-    'DISCORD_TOKEN',
-    'DISCORD_CHAT_CHANNEL_ID',
-    'DISCORD_TRADE_CHANNEL_ID',
-    'DISCORD_HINT_CHANNEL_ID',
-    'DISCORD_LOG_CHANNEL_ID',
-    'ARCHIPELAGO_SERVER',
-    'ARCHIPELAGO_SLOT',
-];
-
+// Required for bot startup
+const REQUIRED_VARS = ['DISCORD_TOKEN', 'GUILD_ID'];
 const missingVars = REQUIRED_VARS.filter((key) => !env[key]);
+
 if (missingVars.length) {
     logger.error(`❌ Missing required env vars: ${missingVars.join(', ')}`);
     process.exit(1);
 }
 
 // ──────────────── MAIN STARTUP ────────────────
+
 async function main() {
     logger.info('🚀 Starting Eclipse-Bot...');
 
     try {
-        await Promise.all([
-            initDiscord(env),
-            initArchipelago(env),
-        ]);
+        await initDiscord(env);
+        logger.info('✅ Discord service initialized successfully.');
 
-        logger.info('✅ All services initialized successfully.');
+        // Archipelago service will be initialized dynamically per hosted server
+        // or could be wired in here if needed
+        // await initArchipelago(env);
+
     } catch (err) {
         logger.error('🔥 Fatal error in main execution:', err);
         process.exit(1);

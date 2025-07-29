@@ -1,90 +1,59 @@
-// services/discord/initDiscord.mjs
+// 📁 services/discord/initDiscord.mjs
 
-import {Client, GatewayIntentBits, Partials} from 'discord.js';
+import {Client, GatewayIntentBits} from 'discord.js';
+import logger from '../../system/log/logHandler.mjs';
+import {ChannelMessageRouter} from './guilds/channelHandler.mjs';
 import {registerCommandHandlers} from './commands/commandHandler.mjs';
-import {handleIncomingDiscordMessage} from './messaging/messageHandler.mjs';
-import {loadUserRoles} from './users/usersHandler.mjs';
-import logger, {setDiscordLogger} from '../../system/log/logHandler.mjs';
+import {getGuildConfig} from './users/usersHandler.mjs';
+import {runFirstTimeSetup} from './guilds/setup.mjs';
 
 /**
- * Initializes the Discord bot connection
- * @param {Object} env - The environment variable map
+ * Initializes the Discord bot, sets up commands and message handling.
+ * @param {Object} env - Environment variables
  */
 export default async function initDiscord(env) {
-    logger.info('🤖 Initializing Discord service...');
-
-    const {
-        DISCORD_TOKEN,
-        DISCORD_CHANNEL_CHAT,
-        DISCORD_CHANNEL_TRADES,
-        DISCORD_CHANNEL_HINTS,
-        DISCORD_CHANNEL_LOGS,
-        LOG_LEVEL
-    } = env;
-
-    if (!DISCORD_TOKEN) {
-        throw new Error('❌ DISCORD_TOKEN not set in environment variables.');
-    }
-
     const client = new Client({
         intents: [
             GatewayIntentBits.Guilds,
             GatewayIntentBits.GuildMessages,
             GatewayIntentBits.MessageContent,
+            GatewayIntentBits.GuildMembers,
+            GatewayIntentBits.DirectMessages,
         ],
-        partials: [Partials.Channel],
+        partials: ['CHANNEL'],
     });
-
-    // Helper: Embed routing
-    client.sendEmbed = (type, embed) => {
-        const channelMap = {
-            chat: DISCORD_CHANNEL_CHAT,
-            trade: DISCORD_CHANNEL_TRADES,
-            hint: DISCORD_CHANNEL_HINTS,
-            log: DISCORD_CHANNEL_LOGS,
-        };
-
-        const channelId = channelMap[type];
-        if (!channelId) return;
-
-        const channel = client.channels.cache.get(channelId);
-        if (channel?.isTextBased()) {
-            channel.send({embeds: [embed]}).catch(err =>
-                logger.error(`💥 Failed to send ${type} embed:`, err)
-            );
-        }
-    };
-
-    // Add sendToLogChannel helper for logger integration
-    client.sendToLogChannel = async (message) => {
-        if (!DISCORD_CHANNEL_LOGS) return;
-
-        const channel = client.channels.cache.get(DISCORD_CHANNEL_LOGS);
-        if (channel?.isTextBased()) {
-            await channel.send(message).catch(err =>
-                logger.error('💥 Failed to send log message:', err)
-            );
-        }
-    };
 
     client.once('ready', async () => {
-        logger.info(`✅ Discord logged in as ${client.user.tag}`);
+        logger.success(`🤖 Logged in as ${client.user.tag}`);
 
-        // Register logger forwarding for embeds
-        setDiscordLogger(client, LOG_LEVEL || 'low');
-
-        // Load user roles and commands
-        await loadUserRoles(client);
-        await registerCommandHandlers(client);
-    });
-
-    client.on('messageCreate', async (message) => {
+        // Check config and run setup if missing
         try {
-            await handleIncomingDiscordMessage(message, env);
+            const config = await getGuildConfig(env.GUILD_ID);
+            if (!config) {
+                logger.warn(`⚠️ No config found for guild ${env.GUILD_ID}. Running first-time setup...`);
+                await runFirstTimeSetup(client);
+            } else {
+                logger.info(`🛠️ Loaded config for guild ${env.GUILD_ID}`);
+            }
         } catch (err) {
-            logger.error('💥 Error in Discord message handler:', err);
+            logger.error('❌ Error during initial setup check:', err);
         }
     });
 
-    await client.login(DISCORD_TOKEN);
+    // Handle messages
+    client.on('messageCreate', (message) =>
+        ChannelMessageRouter.handle(message, env, client)
+    );
+
+    // Login
+    await client.login(env.DISCORD_TOKEN);
+
+    // Register slash commands
+    const handler = new registerCommandHandlers(
+        client,
+        env.DISCORD_TOKEN,
+        env.DISCORD_CLIENT_ID,
+        env.GUILD_ID
+    );
+    await handler.register();
 }

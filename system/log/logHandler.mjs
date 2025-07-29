@@ -90,12 +90,12 @@ function log(level, colorFn, consoleFn, ...args) {
   const shouldSend = ['debug', 'high'].includes(logLevel);
   if (discordLogger && shouldSend) {
     const plain = args.map(arg => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ');
-    discordLogger.sendToLogChannel(`${level.toUpperCase()} ${plain}`).catch(() => {
-    });
+      discordLogger.sendToLogChannel(`${level.toUpperCase()} ${plain}`).catch(() => {
+      });
   }
 }
 
-// Log level shorthands
+// Exported level shorthands
 function info(...args) {
   log('INFO', chalk.cyan, console.log, ...args);
 }
@@ -113,21 +113,16 @@ function success(...args) {
 }
 
 function debug(...args) {
-  const enabled = process.env.DEBUG?.toLowerCase() === 'true' || process.env.DEBUG === '1' || logLevel === 'debug';
+    const enabled =
+        process.env.DEBUG?.toLowerCase() === 'true' ||
+        process.env.DEBUG === '1' ||
+        logLevel === 'debug';
   if (enabled) {
     log('DEBUG', chalk.magenta, console.debug, ...args);
   }
 }
 
-export {
-  info,
-  warn,
-  error,
-  success,
-  debug,
-  setDiscordLogger,
-};
-
+// ✅ Default export for `import logger from ...`
 export default {
   info,
   warn,
