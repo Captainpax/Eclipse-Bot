@@ -1,112 +1,86 @@
-import {existsSync, readFileSync, writeFileSync} from 'fs';
+import db from '../../../system/database/databaseHandler.mjs';
 import logger from '../../../system/log/logHandler.mjs';
 
-const USER_DB_PATH = './discordUsers.db';
-const GUILD_CONFIG_PATH = './guildConfig.json';
-
-let userMap = new Map(); // discordId → { discordId, apSlot, roles: [] }
-
 /**
- * Load user data from disk into memory.
- */
-export function loadUsersFromDisk() {
-    if (!existsSync(USER_DB_PATH)) {
-        logger.warn('⚠️ No user database found. Starting fresh...');
-        return;
-    }
-
-    try {
-        const data = JSON.parse(readFileSync(USER_DB_PATH, 'utf-8'));
-        userMap = new Map(
-            data.map(entry => {
-                if (!Array.isArray(entry.roles)) entry.roles = ['player'];
-                return [entry.discordId, entry];
-            })
-        );
-        logger.info(`📁 Loaded ${userMap.size} users from disk.`);
-    } catch (err) {
-        logger.error('❌ Failed to load user DB:', err);
-    }
-}
-
-/**
- * Persist user data to disk.
- */
-export function saveUsersToDisk() {
-    try {
-        const data = [...userMap.values()];
-        writeFileSync(USER_DB_PATH, JSON.stringify(data, null, 2));
-        logger.info('💾 User DB saved.');
-    } catch (err) {
-        logger.error('❌ Failed to save user DB:', err);
-    }
-}
-
-/**
- * Link a Discord user to their Archipelago slot.
+ * Links a Discord user to their Archipelago slot and persists it to DB.
+ * Uses the AP slot name as the unique player _id.
+ *
  * @param {string} discordId - Discord user ID
- * @param {string} apSlot - Archipelago slot name
- * @returns {object} Updated user object
+ * @param {string} apSlot - Archipelago slot name (unique)
+ * @returns {Promise<object|null>} Updated player document
  */
-export function linkUser(discordId, apSlot) {
-    const user = userMap.get(discordId) || {discordId, roles: ['player']};
-    user.apSlot = apSlot;
-    userMap.set(discordId, user);
-    saveUsersToDisk();
-    return user;
-}
-
-/**
- * Get a user by their Discord ID.
- * @param {string} discordId
- * @returns {object} User object
- */
-export function getUser(discordId) {
-    if (!userMap.has(discordId)) {
-        const newUser = {discordId, roles: ['player']};
-        userMap.set(discordId, newUser);
-        saveUsersToDisk();
-    }
-    return userMap.get(discordId);
-}
-
-/**
- * Get all stored users.
- * @returns {object[]} Array of user objects
- */
-export function getAllUsers() {
-    return [...userMap.values()];
-}
-
-/**
- * Stub for future expansion – currently unused.
- */
-export function loadUserRoles() {
-}
-
-/**
- * Saves the guild configuration to disk.
- * @param {object} config - Guild setup configuration
- */
-export function saveGuildConfig(config) {
+export async function linkUser(discordId, apSlot) {
     try {
-        writeFileSync(GUILD_CONFIG_PATH, JSON.stringify(config, null, 2));
-        logger.info('🛠️ Guild configuration saved to disk.');
+        const player = await db.upsertPlayer(apSlot, discordId);
+        logger.info(`🔗 Linked user ${discordId} -> AP slot ${apSlot}`);
+        return player;
+    } catch (err) {
+        logger.error('❌ Failed to link user:', err);
+        return null;
+    }
+}
+
+/**
+ * Retrieves a player document by Discord ID.
+ * Searches the "discordId" field instead of _id to handle multiple players properly.
+ * Auto-creates a minimal player doc if missing.
+ *
+ * @param {string} discordId
+ * @returns {Promise<object|null>}
+ */
+export async function getUser(discordId) {
+    try {
+        const player = await db.getPlayer(discordId);
+        if (!player) {
+            logger.warn(`⚠️ No player found for Discord ID ${discordId}, creating new record.`);
+            await db.upsertPlayer(discordId, discordId);
+            return await db.getPlayer(discordId);
+        }
+        return player;
+    } catch (err) {
+        logger.error('❌ Failed to get user:', err);
+        return null;
+    }
+}
+
+/**
+ * Saves guild configuration to MongoDB.
+ *
+ * @param {object} config - Guild config object
+ * @returns {Promise<void>}
+ */
+export async function saveGuildConfig(config) {
+    try {
+        if (!config?.guildId) {
+            logger.warn('⚠️ saveGuildConfig called without guildId, skipping.');
+            return;
+        }
+        await db.saveGuildConfig(config);
+        logger.info(`🛠️ Guild configuration saved for guild ${config.guildId}`);
     } catch (err) {
         logger.error('❌ Failed to save guild config:', err);
     }
 }
 
 /**
- * Loads the guild configuration from disk.
+ * Loads guild configuration from MongoDB.
+ * Returns null if no configuration exists (i.e., first-time setup scenario).
+ *
  * @param {string} guildId
- * @returns {object|null}
+ * @returns {Promise<object|null>}
  */
-export function getGuildConfig(guildId) {
+export async function getGuildConfig(guildId) {
+    if (!guildId) {
+        logger.warn('⚠️ getGuildConfig called without guildId.');
+        return null;
+    }
     try {
-        if (!existsSync(GUILD_CONFIG_PATH)) return null;
-        const config = JSON.parse(readFileSync(GUILD_CONFIG_PATH, 'utf-8'));
-        return config.guildId === guildId ? config : null;
+        const config = await db.getGuildConfig(guildId);
+        if (!config) {
+            logger.info(`ℹ️ No config found for guild ${guildId}`);
+            return null;
+        }
+        return config;
     } catch (err) {
         logger.error('❌ Failed to load guild config:', err);
         return null;

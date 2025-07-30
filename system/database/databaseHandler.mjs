@@ -1,37 +1,71 @@
-// 📁 services/system/database/databaseHandler.mjs
+/**
+ * DatabaseHandler Proxy
+ *
+ * Central access point for MongoDB operations.
+ * Wraps the DatabaseHandler object from mongoHandler.mjs
+ * so all services import from here instead of directly importing mongoHandler.
+ */
 
-import sqlite from './sqlite/sqliteHandler.mjs';
-import logger from '../log/logHandler.mjs';
+import {DatabaseHandler} from './mongo/mongoHandler.mjs';
 
 /**
- * Initializes the database connection and syncs schema.
- * @returns {Promise<void>}
+ * Ensures the database connection is established before performing operations.
  */
-export async function initDatabase() {
-    logger.info('🗄️ Initializing database...');
-    try {
-        await sqlite.connect();
-        await sqlite.syncSchema();
-        logger.success('✅ Database initialized and schema synced.');
-    } catch (err) {
-        logger.error('❌ Failed to initialize database:', err);
-    }
+export async function connectDatabase() {
+    await DatabaseHandler.ensureConnection();
 }
 
 /**
- * Re-export of getUserLink from sqliteHandler for external access.
- * @param {string} discordId
- * @returns {Promise<object|null>}
+ * PLAYER FUNCTIONS
  */
-export async function getUserLink(discordId) {
-    return await sqlite.getUserLink(discordId);
+export async function upsertPlayer(playerId, discordId) {
+    return DatabaseHandler.upsertPlayer(playerId, discordId);
+}
+
+export async function linkGuildToPlayer(playerId, guildId, roles = []) {
+    return DatabaseHandler.linkGuildToPlayer(playerId, guildId, roles);
+}
+
+export async function addPlayerToServer(playerId, guildId, serverUuid, serverName, role = 'player') {
+    return DatabaseHandler.addPlayerToServer(playerId, guildId, serverUuid, serverName, role);
+}
+
+export async function logReceivedItem(playerId, item) {
+    return DatabaseHandler.logReceivedItem(playerId, item);
+}
+
+export async function getPlayer(playerId) {
+    return DatabaseHandler.getPlayer(playerId);
 }
 
 /**
- * Re-export of logReceivedItem from sqliteHandler for external access.
- * @param {object} item
- * @returns {Promise<void>}
+ * SERVER FUNCTIONS
  */
-export async function logReceivedItem(item) {
-    return await sqlite.logReceivedItem(item);
+export async function saveGuildConfig(config) {
+    return DatabaseHandler.saveGuildConfig(config);
 }
+
+export async function getGuildConfig(guildId) {
+    return DatabaseHandler.getGuildConfig(guildId);
+}
+
+export async function addServerInstance(guildId, serverData) {
+    return DatabaseHandler.addServerInstance(guildId, serverData);
+}
+
+export async function logSentItem(guildId, serverUuid, item) {
+    return DatabaseHandler.logSentItem(guildId, serverUuid, item);
+}
+
+export default {
+    connectDatabase,
+    upsertPlayer,
+    linkGuildToPlayer,
+    addPlayerToServer,
+    logReceivedItem,
+    getPlayer,
+    saveGuildConfig,
+    getGuildConfig,
+    addServerInstance,
+    logSentItem
+};

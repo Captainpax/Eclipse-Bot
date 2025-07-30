@@ -14,7 +14,7 @@ const env = Object.fromEntries(
 );
 
 // Required for bot startup
-const REQUIRED_VARS = ['DISCORD_TOKEN', 'GUILD_ID'];
+const REQUIRED_VARS = ['DISCORD_TOKEN', 'SUPER_USER_ID'];
 const missingVars = REQUIRED_VARS.filter((key) => !env[key]);
 
 if (missingVars.length) {
