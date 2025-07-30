@@ -1,14 +1,17 @@
 /**
- * MongoDB Handler for Eclipse-Bot
- * --------------------------------------------------------
- * Handles:
- *  - Player data (linked guilds, received items)
- *  - Server configs (AP server instances, guild data)
+ * 📁 system/database/mongo/mongoHandler.mjs
+ * -----------------------------------------------------------------
+ * Core MongoDB Handler for Eclipse-Bot
  *
- * Features:
- *  ✅ Auto-reconnects if MONGO_URI changes at runtime
- *  ✅ Creates models only once
- *  ✅ Handles CRUD for players and servers
+ * ✅ Handles:
+ *    - Player data (linked guilds, received items)
+ *    - Server configs (Archipelago server instances, guild data)
+ *
+ * ✅ Features:
+ *    - Auto-reconnects if MONGO_URI changes dynamically at runtime
+ *    - Uses environment vars for URI, username, password, DB name
+ *    - Initializes Mongoose models only once
+ *    - Provides CRUD operations for players and servers
  */
 
 import mongoose from 'mongoose';
@@ -19,7 +22,9 @@ let Player = null;
 let Server = null;
 let currentUri = process.env.MONGO_URI || null;
 
-// ==================== SCHEMAS ====================
+/* ========================================================================
+   SCHEMAS
+   ======================================================================== */
 
 // ---- Players ----
 const receivedItemSchema = new mongoose.Schema({
@@ -96,21 +101,22 @@ const serverConfigSchema = new mongoose.Schema({
     servers: [serverInstanceSchema]
 }, {timestamps: true});
 
-// ===============================================================
+/* ========================================================================
+   CONNECTION HANDLER
+   ======================================================================== */
 
 /**
- * Ensures the MongoDB connection is established.
- * - Reconnects if process.env.MONGO_URI changes dynamically
+ * Ensures a MongoDB connection exists.
+ * - Automatically reconnects if URI changes or connection drops
  */
-async function ensureConnection() {
+export async function ensureConnection() {
     const newUri = process.env.MONGO_URI;
 
     if (!newUri) {
         logger.error('❌ MONGO_URI is not defined in environment variables.');
-        return;
+        throw new Error('MONGO_URI not defined');
     }
 
-    // Reconnect if URI changed or connection lost
     if (!connection || mongoose.connection.readyState !== 1 || newUri !== currentUri) {
         try {
             if (connection) {
@@ -122,35 +128,45 @@ async function ensureConnection() {
             connection = await mongoose.connect(newUri, {
                 dbName: process.env.MONGO_DB_NAME || 'ecbot',
                 user: process.env.MONGO_USER || 'ecbot',
-                pass: process.env.MONGO_PASS || '',
-                useNewUrlParser: true,
-                useUnifiedTopology: true
+                pass: process.env.MONGO_PASS || ''
             });
 
             currentUri = newUri;
             logger.success(`✅ Connected to MongoDB database: ${process.env.MONGO_DB_NAME || 'ecbot'}`);
 
-            // Initialize models once
             if (!Player) Player = mongoose.models.players || mongoose.model('players', playerSchema);
             if (!Server) Server = mongoose.models.servers || mongoose.model('servers', serverConfigSchema);
 
         } catch (err) {
             logger.error('🔥 MongoDB connection error:', err);
             connection = null;
+            throw err;
         }
     }
+
+    return connection;
 }
 
-// ===============================================================
-// ==================== PLAYER FUNCTIONS =========================
-// ===============================================================
+/* ========================================================================
+   MODEL GETTERS (SAFE)
+   ======================================================================== */
+export function getPlayerModel() {
+    return Player;
+}
 
-async function upsertPlayer(playerId, discordId) {
+export function getServerModel() {
+    return Server;
+}
+
+/* ========================================================================
+   PLAYER FUNCTIONS
+   ======================================================================== */
+export async function upsertPlayer(playerId, discordId) {
     await ensureConnection();
     return Player.findByIdAndUpdate(playerId, {discordId}, {upsert: true, new: true});
 }
 
-async function linkGuildToPlayer(playerId, guildId, roles = []) {
+export async function linkGuildToPlayer(playerId, guildId, roles = []) {
     await ensureConnection();
     const player = await Player.findById(playerId);
     if (!player) return null;
@@ -164,7 +180,7 @@ async function linkGuildToPlayer(playerId, guildId, roles = []) {
     return player.save();
 }
 
-async function addPlayerToServer(playerId, guildId, serverUuid, serverName, role = 'player') {
+export async function addPlayerToServer(playerId, guildId, serverUuid, serverName, role = 'player') {
     await ensureConnection();
     const player = await Player.findById(playerId);
     if (!player) return null;
@@ -178,44 +194,46 @@ async function addPlayerToServer(playerId, guildId, serverUuid, serverName, role
     return player.save();
 }
 
-async function logReceivedItem(playerId, item) {
+export async function logReceivedItem(playerId, item) {
     await ensureConnection();
     return Player.findByIdAndUpdate(playerId, {$push: {receivedItems: {...item, timestamp: new Date()}}});
 }
 
-async function getPlayer(playerId) {
+export async function getPlayer(playerId) {
     await ensureConnection();
     return Player.findById(playerId).lean();
 }
 
-// ===============================================================
-// ==================== SERVER FUNCTIONS =========================
-// ===============================================================
-
-async function saveGuildConfig(config) {
+/* ========================================================================
+   SERVER FUNCTIONS
+   ======================================================================== */
+export async function saveGuildConfig(config) {
     await ensureConnection();
     return Server.findByIdAndUpdate(config.guildId, {...config, _id: config.guildId}, {upsert: true, new: true});
 }
 
-async function getGuildConfig(guildId) {
+export async function getGuildConfig(guildId) {
     await ensureConnection();
     return Server.findById(guildId).lean();
 }
 
-async function addServerInstance(guildId, serverData) {
+export async function addServerInstance(guildId, serverData) {
     await ensureConnection();
     return Server.findByIdAndUpdate(guildId, {$push: {servers: serverData}}, {new: true});
 }
 
-async function logSentItem(guildId, serverUuid, item) {
+export async function logSentItem(guildId, serverUuid, item) {
     await ensureConnection();
     return Server.updateOne({_id: guildId, "servers.uuid": serverUuid}, {$push: {"servers.$.sentItems": item}});
 }
 
-// ===============================================================
-
+/* ========================================================================
+   EXPORT
+   ======================================================================== */
 export const DatabaseHandler = {
     ensureConnection,
+    getPlayerModel,
+    getServerModel,
     upsertPlayer,
     linkGuildToPlayer,
     addPlayerToServer,

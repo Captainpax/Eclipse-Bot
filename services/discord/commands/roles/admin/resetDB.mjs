@@ -1,39 +1,62 @@
-// services/discord/commands/roles/admin/resetDB.mjs
-
-import fs from 'fs';
-import {exec} from 'child_process';
+import {PermissionFlagsBits, SlashCommandBuilder} from 'discord.js';
+import {DatabaseHandler} from '../../../../../system/database/mongo/mongoHandler.mjs';
+import logger from '../../../../../system/log/logHandler.mjs';
 
 /**
- * Deletes the bot database and restarts the process.
- * Usage: !resetdb
+ * /resetdb
+ * Deletes all data in MongoDB (players, guild configs, servers).
+ * Only available to admins or server owner.
  */
-export default async function (message) {
-    const dbPath = './eclipse.db';
+export default {
+    data: new SlashCommandBuilder()
+        .setName('resetdb')
+        .setDescription('⚠️ Deletes all Eclipse-Bot data and restarts the bot.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-    try {
-        if (fs.existsSync(dbPath)) {
-            fs.unlinkSync(dbPath);
-        } else {
-            return message.reply('⚠️ No database file found to delete.');
-        }
+    async execute(interaction) {
+        try {
+            await interaction.reply({
+                content: '⚠️ Are you sure you want to wipe **ALL data**? This will restart the bot in 2 seconds.',
+                ephemeral: true
+            });
 
-        await message.reply('🧼 Database deleted. Restarting bot...');
-
-        // Gracefully kill and restart the process using `npm start`
-        exec('npm restart', (err, stdout, stderr) => {
-            if (err) {
-                console.error('Failed to restart:', err);
-            } else {
-                console.log('Bot restarting...');
+            const db = await DatabaseHandler.ensureConnection();
+            if (!db) {
+                return interaction.followUp({
+                    content: '❌ Could not connect to the database. Abort.',
+                    ephemeral: true
+                });
             }
-        });
 
-        // Optionally exit this process after short delay
-        setTimeout(() => {
-            process.exit(0);
-        }, 1000);
-    } catch (err) {
-        console.error('💥 Error in resetDB:', err);
-        message.reply('❌ Failed to reset the database.');
+            const Player = DatabaseHandler.getPlayerModel?.() ?? null;
+            const Server = DatabaseHandler.getServerModel?.() ?? null;
+
+            if (Player) {
+                await Player.deleteMany({});
+                logger.warn('⚠️ All Player documents wiped.');
+            }
+            if (Server) {
+                await Server.deleteMany({});
+                logger.warn('⚠️ All Server documents wiped.');
+            }
+
+            logger.warn(`⚠️ Database wiped by admin command from ${interaction.user.tag}`);
+
+            await interaction.followUp({
+                content: '🧼 Database wiped successfully. Restarting bot...',
+                ephemeral: true
+            });
+
+            setTimeout(() => process.exit(1), 2000);
+
+        } catch (err) {
+            logger.error(`💥 Error in /resetdb command: ${err.message}`);
+            if (!interaction.replied) {
+                await interaction.reply({
+                    content: '❌ Failed to reset the database.',
+                    ephemeral: true
+                });
+            }
+        }
     }
-}
+};

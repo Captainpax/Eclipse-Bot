@@ -1,29 +1,31 @@
-// 📁 services/discord/commands/roles/player/list.mjs
-
 import {SlashCommandBuilder} from 'discord.js';
 import {getSignupQueue} from '../../../guilds/channelHandler.mjs';
 
 export default {
     data: new SlashCommandBuilder()
         .setName('list')
-        .setDescription('View the current signup queue for the next game.'),
+        .setDescription('Show the current signup queue.'),
 
     async execute(interaction) {
-        const guildId = interaction.guildId;
-        const queue = getSignupQueue(guildId);
+        try {
+            const guildId = interaction.guildId;
+            const queue = getSignupQueue(guildId);
 
-        if (!queue.length) {
-            return interaction.reply({
-                content: '📭 The signup queue is currently empty.',
+            if (!queue || queue.length === 0) {
+                return interaction.reply({
+                    content: '📭 The signup queue is currently empty.',
+                    ephemeral: true,
+                });
+            }
+
+            const list = queue.map((id, i) => `\n> **${i + 1}.** <@${id}>`).join('');
+            await interaction.reply({content: `📋 **Signup Queue:**${list}`, allowedMentions: {parse: []}});
+        } catch (err) {
+            console.error('🔥 /list command error:', err);
+            await interaction.reply({
+                content: '❌ Could not fetch the signup queue.',
                 ephemeral: true,
             });
         }
-
-        const formatted = queue.map((userId, index) => `${index + 1}. <@${userId}>`).join('\n');
-
-        await interaction.reply({
-            content: `📋 **Signup Queue**:\n${formatted}`,
-            ephemeral: true,
-        });
     },
 };

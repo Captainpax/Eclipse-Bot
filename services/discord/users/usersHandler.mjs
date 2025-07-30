@@ -1,41 +1,42 @@
 /**
  * 📁 services/discord/users/usersHandler.mjs
  * ------------------------------------------------
- * Central access point for MongoDB operations.
+ * Central access point for MongoDB operations for Eclipse-Bot.
  *
  * ✅ Wraps DatabaseHandler methods for:
  *    - Players
  *    - Servers
  *
  * ✅ Adds:
- *    - Safe connection checks to avoid repeated errors
+ *    - Safe connection checks with retries
  *    - Unified logging
- *    - Exported functions for consistent imports across project
+ *    - Legacy `getUser` alias for backward compatibility
  *
- * Usage:
+ * Usage Example:
  *    import { saveGuildConfig, upsertPlayer } from './usersHandler.mjs';
  */
 
-import {DatabaseHandler} from '../../../system/database/databaseHandler.mjs';
+import DatabaseHandler from '../../../system/database/databaseHandler.mjs';
 import logger from '../../../system/log/logHandler.mjs';
 
 let dbAvailable = false;        // Tracks if DB connection is healthy
 let lastErrorLogged = false;    // Prevents log spam for repeated failures
+let retryDelay = 2000;          // Start with 2s backoff
+const MAX_DELAY = 30000;        // Max 30s between retries
 
 /**
  * Ensures the database connection is established before performing operations.
- * If connection fails:
- *   - Sets dbAvailable = false
- *   - Logs error only once until recovered
+ * Implements exponential backoff if connection repeatedly fails.
  *
  * @returns {Promise<boolean>} True if DB connection is ready
  */
 async function safeEnsureConnection() {
     try {
-        await DatabaseHandler.ensureConnection();
+        await DatabaseHandler.connectDatabase();
         if (!dbAvailable) logger.success('✅ Database connection established.');
         dbAvailable = true;
-        lastErrorLogged = false; // reset log suppression if recovered
+        lastErrorLogged = false;
+        retryDelay = 2000; // reset delay
         return true;
     } catch (err) {
         dbAvailable = false;
@@ -43,6 +44,8 @@ async function safeEnsureConnection() {
             logger.error(`❌ Database connection unavailable: ${err.message}`);
             lastErrorLogged = true;
         }
+        await new Promise(r => setTimeout(r, retryDelay));
+        retryDelay = Math.min(retryDelay * 2, MAX_DELAY);
         return false;
     }
 }
@@ -91,10 +94,19 @@ export async function getPlayer(playerId) {
     return DatabaseHandler.getPlayer(playerId);
 }
 
+/**
+ * ✅ Legacy alias for backward compatibility
+ * Some files still use `getUser`, map it to `getPlayer`
+ */
+export async function getUser(playerId) {
+    return getPlayer(playerId);
+}
+
 /* ------------------- SERVER FUNCTIONS ------------------- */
 
 /**
  * Saves or updates the configuration for a guild/server.
+ * Supports extended fields (roles, channels, fqdn, portRange).
  */
 export async function saveGuildConfig(config) {
     if (!(await safeEnsureConnection())) return null;
@@ -132,6 +144,7 @@ export default {
     addPlayerToServer,
     logReceivedItem,
     getPlayer,
+    getUser,             // ✅ Added alias for compatibility
     saveGuildConfig,
     getGuildConfig,
     addServerInstance,
