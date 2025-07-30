@@ -1,88 +1,139 @@
-import db from '../../../system/database/databaseHandler.mjs';
+/**
+ * 📁 services/discord/users/usersHandler.mjs
+ * ------------------------------------------------
+ * Central access point for MongoDB operations.
+ *
+ * ✅ Wraps DatabaseHandler methods for:
+ *    - Players
+ *    - Servers
+ *
+ * ✅ Adds:
+ *    - Safe connection checks to avoid repeated errors
+ *    - Unified logging
+ *    - Exported functions for consistent imports across project
+ *
+ * Usage:
+ *    import { saveGuildConfig, upsertPlayer } from './usersHandler.mjs';
+ */
+
+import {DatabaseHandler} from '../../../system/database/databaseHandler.mjs';
 import logger from '../../../system/log/logHandler.mjs';
 
-/**
- * Links a Discord user to their Archipelago slot and persists it to DB.
- * Uses the AP slot name as the unique player _id.
- *
- * @param {string} discordId - Discord user ID
- * @param {string} apSlot - Archipelago slot name (unique)
- * @returns {Promise<object|null>} Updated player document
- */
-export async function linkUser(discordId, apSlot) {
-    try {
-        const player = await db.upsertPlayer(apSlot, discordId);
-        logger.info(`🔗 Linked user ${discordId} -> AP slot ${apSlot}`);
-        return player;
-    } catch (err) {
-        logger.error('❌ Failed to link user:', err);
-        return null;
-    }
-}
+let dbAvailable = false;        // Tracks if DB connection is healthy
+let lastErrorLogged = false;    // Prevents log spam for repeated failures
 
 /**
- * Retrieves a player document by Discord ID.
- * Searches the "discordId" field instead of _id to handle multiple players properly.
- * Auto-creates a minimal player doc if missing.
+ * Ensures the database connection is established before performing operations.
+ * If connection fails:
+ *   - Sets dbAvailable = false
+ *   - Logs error only once until recovered
  *
- * @param {string} discordId
- * @returns {Promise<object|null>}
+ * @returns {Promise<boolean>} True if DB connection is ready
  */
-export async function getUser(discordId) {
+async function safeEnsureConnection() {
     try {
-        const player = await db.getPlayer(discordId);
-        if (!player) {
-            logger.warn(`⚠️ No player found for Discord ID ${discordId}, creating new record.`);
-            await db.upsertPlayer(discordId, discordId);
-            return await db.getPlayer(discordId);
+        await DatabaseHandler.ensureConnection();
+        if (!dbAvailable) logger.success('✅ Database connection established.');
+        dbAvailable = true;
+        lastErrorLogged = false; // reset log suppression if recovered
+        return true;
+    } catch (err) {
+        dbAvailable = false;
+        if (!lastErrorLogged) {
+            logger.error(`❌ Database connection unavailable: ${err.message}`);
+            lastErrorLogged = true;
         }
-        return player;
-    } catch (err) {
-        logger.error('❌ Failed to get user:', err);
-        return null;
+        return false;
     }
 }
 
+/* ------------------- PLAYER FUNCTIONS ------------------- */
+
 /**
- * Saves guild configuration to MongoDB.
- *
- * @param {object} config - Guild config object
- * @returns {Promise<void>}
+ * Creates or updates a Player document by ID.
+ * @param {string} playerId - Player's internal ID
+ * @param {string} discordId - Discord snowflake ID
+ */
+export async function upsertPlayer(playerId, discordId) {
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.upsertPlayer(playerId, discordId);
+}
+
+/**
+ * Links a guild and its roles to a player profile.
+ */
+export async function linkGuildToPlayer(playerId, guildId, roles = []) {
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.linkGuildToPlayer(playerId, guildId, roles);
+}
+
+/**
+ * Adds a player entry to a server instance.
+ */
+export async function addPlayerToServer(playerId, guildId, serverUuid, serverName, role = 'player') {
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.addPlayerToServer(playerId, guildId, serverUuid, serverName, role);
+}
+
+/**
+ * Logs an item received by a player.
+ */
+export async function logReceivedItem(playerId, item) {
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.logReceivedItem(playerId, item);
+}
+
+/**
+ * Retrieves player data by ID.
+ */
+export async function getPlayer(playerId) {
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.getPlayer(playerId);
+}
+
+/* ------------------- SERVER FUNCTIONS ------------------- */
+
+/**
+ * Saves or updates the configuration for a guild/server.
  */
 export async function saveGuildConfig(config) {
-    try {
-        if (!config?.guildId) {
-            logger.warn('⚠️ saveGuildConfig called without guildId, skipping.');
-            return;
-        }
-        await db.saveGuildConfig(config);
-        logger.info(`🛠️ Guild configuration saved for guild ${config.guildId}`);
-    } catch (err) {
-        logger.error('❌ Failed to save guild config:', err);
-    }
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.saveGuildConfig(config);
 }
 
 /**
- * Loads guild configuration from MongoDB.
- * Returns null if no configuration exists (i.e., first-time setup scenario).
- *
- * @param {string} guildId
- * @returns {Promise<object|null>}
+ * Retrieves a guild's configuration by ID.
  */
 export async function getGuildConfig(guildId) {
-    if (!guildId) {
-        logger.warn('⚠️ getGuildConfig called without guildId.');
-        return null;
-    }
-    try {
-        const config = await db.getGuildConfig(guildId);
-        if (!config) {
-            logger.info(`ℹ️ No config found for guild ${guildId}`);
-            return null;
-        }
-        return config;
-    } catch (err) {
-        logger.error('❌ Failed to load guild config:', err);
-        return null;
-    }
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.getGuildConfig(guildId);
 }
+
+/**
+ * Adds a new server instance to the guild config.
+ */
+export async function addServerInstance(guildId, serverData) {
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.addServerInstance(guildId, serverData);
+}
+
+/**
+ * Logs an item sent out from a server instance.
+ */
+export async function logSentItem(guildId, serverUuid, item) {
+    if (!(await safeEnsureConnection())) return null;
+    return DatabaseHandler.logSentItem(guildId, serverUuid, item);
+}
+
+/* ------------------- DEFAULT EXPORT ------------------- */
+export default {
+    upsertPlayer,
+    linkGuildToPlayer,
+    addPlayerToServer,
+    logReceivedItem,
+    getPlayer,
+    saveGuildConfig,
+    getGuildConfig,
+    addServerInstance,
+    logSentItem
+};

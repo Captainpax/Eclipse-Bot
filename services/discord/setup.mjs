@@ -1,22 +1,101 @@
-// 📁 services/discord/setup.mjs
+/**
+ * Eclipse-Bot Setup Wizard
+ * ------------------------------------------------------
+ * Handles first-time setup for Eclipse-Bot with:
+ *  - Guild selection and channel category configuration
+ *  - Automatic MongoDB container deployment (Docker)
+ *  - Shared Docker network setup
+ *  - Auto-generation of MongoDB credentials
+ *  - Live updating of .env file and process.env variables
+ *  - Immediate DB connection test (no restart required)
+ *  - Saving guild configuration in database
+ */
 
 import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder} from 'discord.js';
 import dotenv from 'dotenv';
 import logger from '../../system/log/logHandler.mjs';
 import {saveGuildConfig} from './users/usersHandler.mjs';
+import {DatabaseHandler} from './mongo/mongoHandler.mjs';
 import Docker from 'dockerode';
 import net from 'net';
+import fs from 'fs';
 
 dotenv.config();
 
 const docker = new Docker({socketPath: '/var/run/docker.sock'});
-const setupSessions = new Map(); // userId -> session state
+const setupSessions = new Map(); // Stores ongoing setup states keyed by userId
+
+// Shared constants
+const DOCKER_NETWORK_NAME = 'ecbot-net';
+const DEFAULT_DB_NAME = 'ecbot';
+
+/* -------------------------------------------------------------------------- */
+/*                             Helper Functions                               */
+
+/* -------------------------------------------------------------------------- */
 
 /**
- * Sends a DM to the SuperUser to begin the Eclipse-Bot setup wizard.
- *
- * @param {import('discord.js').Client} client - The Discord bot client instance.
- * @returns {Promise<void>}
+ * Writes new MongoDB credentials to `.env` file
+ * and updates process.env live.
+ */
+function updateEnvVars(uri, user, pass, dbName = DEFAULT_DB_NAME) {
+    const envPath = './.env';
+    let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+
+    // Remove old values
+    content = content
+        .replace(/MONGO_URI=.*/g, '')
+        .replace(/MONGO_USER=.*/g, '')
+        .replace(/MONGO_PASS=.*/g, '')
+        .replace(/MONGO_DB_NAME=.*/g, '');
+
+    // Append new values
+    content += `\nMONGO_URI=${uri}\nMONGO_USER=${user}\nMONGO_PASS=${pass}\nMONGO_DB_NAME=${dbName}\n`;
+
+    fs.writeFileSync(envPath, content.trim() + '\n', 'utf8');
+    logger.info('✅ Updated .env file with MongoDB credentials');
+
+    // Live update for running bot session
+    process.env.MONGO_URI = uri;
+    process.env.MONGO_USER = user;
+    process.env.MONGO_PASS = pass;
+    process.env.MONGO_DB_NAME = dbName;
+
+    logger.info('🔄 Updated environment variables in memory for current session');
+}
+
+/**
+ * Ensures a shared Docker network exists for bot & database.
+ */
+async function ensureNetwork() {
+    const networks = await docker.listNetworks();
+    if (!networks.some(net => net.Name === DOCKER_NETWORK_NAME)) {
+        logger.info(`🔧 Creating shared Docker network: ${DOCKER_NETWORK_NAME}`);
+        await docker.createNetwork({Name: DOCKER_NETWORK_NAME, Driver: 'bridge'});
+    }
+}
+
+/**
+ * Waits until MongoDB is ready to accept connections.
+ */
+function checkMongoReady(host, port) {
+    return new Promise(resolve => {
+        const socket = net.createConnection(port, host);
+        socket.once('connect', () => {
+            socket.destroy();
+            resolve(true);
+        });
+        socket.once('error', () => resolve(false));
+    });
+}
+
+/* -------------------------------------------------------------------------- */
+/*                            Main Setup Functions                            */
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Starts the setup wizard via DM to SuperUser.
  */
 export async function runFirstTimeSetup(client) {
     const superUserId = process.env.SUPER_USER_ID;
@@ -30,7 +109,7 @@ export async function runFirstTimeSetup(client) {
 
     const embed = new EmbedBuilder()
         .setTitle('🔧 Eclipse-Bot Setup Wizard')
-        .setDescription('Welcome! This wizard will guide you through the first-time setup.\n\nPress **Start Setup** to begin.')
+        .setDescription('Welcome! This wizard will guide you through first-time setup.\n\nPress **Start Setup** to begin.')
         .setColor(0x5865F2);
 
     const startButton = new ButtonBuilder()
@@ -43,10 +122,7 @@ export async function runFirstTimeSetup(client) {
 }
 
 /**
- * Handles button and select menu interactions during setup.
- *
- * @param {import('discord.js').Interaction} interaction - Discord interaction.
- * @param {import('discord.js').Client} client - Discord client instance.
+ * Handles button/select menu interactions during setup flow.
  */
 export async function handleSetupInteraction(interaction, client) {
     const userId = interaction.user.id;
@@ -54,7 +130,7 @@ export async function handleSetupInteraction(interaction, client) {
     const session = setupSessions.get(userId);
 
     switch (interaction.customId) {
-        // ───────────── STEP 1: Server Selection ─────────────
+        /* -------------------- STEP 1: Select Guild -------------------- */
         case 'setup_start': {
             const guildChoices = client.guilds.cache
                 .filter(g => g.ownerId === userId)
@@ -69,20 +145,20 @@ export async function handleSetupInteraction(interaction, client) {
                 .setPlaceholder('Select a server...')
                 .addOptions(guildChoices);
 
-            const embed = new EmbedBuilder()
-                .setTitle('Step 1️⃣ - Server Selection')
-                .setDescription('Choose the server where Eclipse-Bot should be configured.')
-                .setColor(0x5865F2);
-
-            await interaction.update({embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)]});
+            await interaction.update({
+                embeds: [new EmbedBuilder()
+                    .setTitle('Step 1️⃣ - Server Selection')
+                    .setDescription('Choose the server where Eclipse-Bot should be configured.')
+                    .setColor(0x5865F2)],
+                components: [new ActionRowBuilder().addComponents(selectMenu)]
+            });
             session.step = 2;
             break;
         }
 
-        // ───────────── STEP 2: Category ─────────────
+        /* -------------------- STEP 2: Category -------------------- */
         case 'setup_select_guild': {
             session.choices.guildId = interaction.values[0];
-
             const guild = await client.guilds.fetch(session.choices.guildId);
             const categories = guild.channels.cache.filter(ch => ch.type === 4);
             const catChoices = categories.map(c => ({label: c.name, value: c.id}));
@@ -97,13 +173,11 @@ export async function handleSetupInteraction(interaction, client) {
                 .setLabel('➕ Create New Category')
                 .setStyle(ButtonStyle.Secondary);
 
-            const embed = new EmbedBuilder()
-                .setTitle('Step 2️⃣ - Category Setup')
-                .setDescription('Pick an existing category for Eclipse-Bot channels or create a new one.')
-                .setColor(0x5865F2);
-
             await interaction.update({
-                embeds: [embed],
+                embeds: [new EmbedBuilder()
+                    .setTitle('Step 2️⃣ - Category Setup')
+                    .setDescription('Pick an existing category for Eclipse-Bot channels or create a new one.')
+                    .setColor(0x5865F2)],
                 components: [new ActionRowBuilder().addComponents(catSelect), new ActionRowBuilder().addComponents(createNewBtn)]
             });
             session.step = 3;
@@ -124,15 +198,15 @@ export async function handleSetupInteraction(interaction, client) {
             break;
         }
 
-        // ───────────── STEP 3: Database Setup ─────────────
+        /* -------------------- STEP 3: Database -------------------- */
         case 'setup_db_docker': {
-            await session.dm.send('🐳 **Starting MongoDB Docker container... this may take up to a minute.**');
+            await session.dm.send('🐳 **Starting MongoDB container on shared network...**');
             const success = await startMongoDocker(session);
             if (success) {
                 await session.dm.send('✅ MongoDB container is running and ready!');
                 await askRoles(interaction, session, true);
             } else {
-                await session.dm.send('❌ Failed to start MongoDB container. Please check Docker and try manual URI setup.');
+                await session.dm.send('❌ Failed to start MongoDB container.');
             }
             break;
         }
@@ -150,7 +224,7 @@ export async function handleSetupInteraction(interaction, client) {
             break;
         }
 
-        // ───────────── STEP 4: Roles ─────────────
+        /* -------------------- STEP 4: Roles -------------------- */
         case 'setup_roles_autocreate': {
             const guild = await client.guilds.fetch(session.choices.guildId);
             await session.dm.send('⚙️ Creating default Moderator and Player roles...');
@@ -161,16 +235,11 @@ export async function handleSetupInteraction(interaction, client) {
             await finalizeConfig(interaction, session);
             break;
         }
-
-        default:
-            break;
     }
 }
 
 /**
- * Handles manual text messages during setup.
- *
- * @param {import('discord.js').Message} message - Discord message object.
+ * Handles plain text messages for manual Mongo URI entry.
  */
 export async function handleSetupMessage(message) {
     const session = setupSessions.get(message.author.id);
@@ -182,63 +251,46 @@ export async function handleSetupMessage(message) {
     }
 }
 
-/**
- * Asks the user how they want to set up MongoDB.
- */
+/* ------------------------ Sub-Step Functions ------------------------ */
+
 async function askDatabaseSetup(interaction, session) {
-    const dockerBtn = new ButtonBuilder()
-        .setCustomId('setup_db_docker')
-        .setLabel('🐳 Use Docker for MongoDB')
-        .setStyle(ButtonStyle.Primary);
-
-    const manualBtn = new ButtonBuilder()
-        .setCustomId('setup_db_manual')
-        .setLabel('🔗 Provide Existing URI')
-        .setStyle(ButtonStyle.Secondary);
-
-    const embed = new EmbedBuilder()
-        .setTitle('Step 3️⃣ - Database Setup')
-        .setDescription('Choose how to configure MongoDB.\nEclipse-Bot can spin up a local container or you can provide your own connection string.')
-        .setColor(0x5865F2);
+    const dockerBtn = new ButtonBuilder().setCustomId('setup_db_docker').setLabel('🐳 Use Docker for MongoDB').setStyle(ButtonStyle.Primary);
+    const manualBtn = new ButtonBuilder().setCustomId('setup_db_manual').setLabel('🔗 Provide Existing URI').setStyle(ButtonStyle.Secondary);
 
     await interaction.update({
-        embeds: [embed],
+        embeds: [new EmbedBuilder().setTitle('Step 3️⃣ - Database Setup').setDescription('Choose how to configure MongoDB.').setColor(0x5865F2)],
         components: [new ActionRowBuilder().addComponents(dockerBtn, manualBtn)]
     });
     session.step = 4;
 }
 
 /**
- * Starts a MongoDB Docker container for the bot's database.
- *
- * @param {Object} session - Current setup session data.
- * @returns {Promise<boolean>} - True if container started successfully.
+ * Deploys a MongoDB container attached to shared Docker network.
  */
 async function startMongoDocker(session) {
     try {
         const password = Math.random().toString(36).slice(-10);
         const containerName = 'ecbot-mongo';
 
+        await ensureNetwork();
+
+        // Remove old container
         await session.dm.send('🔄 Removing any old MongoDB container...');
         try {
-            const old = docker.getContainer(containerName);
-            await old.remove({force: true}).catch(() => {
-            });
+            await docker.getContainer(containerName).remove({force: true});
         } catch (_) {
         }
 
-        // ✅ Auto-pull mongo image if missing
-        await session.dm.send('📦 Pulling `mongo:latest` image (if not cached)... this might take a while.');
+        // Pull image if needed
+        await session.dm.send('📦 Pulling `mongo:latest` image (if needed)...');
         await new Promise((resolve, reject) => {
             docker.pull('mongo:latest', (err, stream) => {
                 if (err) return reject(err);
-                docker.modem.followProgress(stream, () => {
-                    logger.info('✅ mongo:latest image ready.');
-                    resolve();
-                });
+                docker.modem.followProgress(stream, () => resolve());
             });
         });
 
+        // Create new container
         await session.dm.send('🚀 Creating MongoDB container...');
         const container = await docker.createContainer({
             Image: 'mongo:latest',
@@ -247,31 +299,26 @@ async function startMongoDocker(session) {
                 `MONGO_INITDB_ROOT_USERNAME=ecbot`,
                 `MONGO_INITDB_ROOT_PASSWORD=${password}`
             ],
+            ExposedPorts: {'27017/tcp': {}},
             HostConfig: {
-                PortBindings: {
-                    '27017/tcp': [{HostPort: '27017'}]
-                },
+                PortBindings: {'27017/tcp': [{HostPort: '27017'}]},
                 RestartPolicy: {Name: 'unless-stopped'}
-            }
+            },
+            NetworkingConfig: {EndpointsConfig: {[DOCKER_NETWORK_NAME]: {}}},
+            Cmd: ["mongod", "--bind_ip_all", "--auth"]
         });
         await container.start();
 
-        await session.dm.send('⏳ Waiting for MongoDB to become ready...');
-        let attempts = 0;
-        while (attempts < 15) {
-            const ready = await checkMongoReady('localhost', 27017);
-            if (ready) break;
-            await new Promise(r => setTimeout(r, 2000));
-            attempts++;
-        }
-        if (attempts >= 15) {
-            logger.error('MongoDB container did not become ready in time.');
-            return false;
-        }
-
-        session.choices.mongoUri = `mongodb://ecbot:${password}@localhost:27017`;
+        const uri = `mongodb://ecbot:${password}@ecbot-mongo:27017/${DEFAULT_DB_NAME}?authSource=admin`;
+        session.choices.mongoUri = uri;
         session.choices.mongoUser = 'ecbot';
         session.choices.mongoPass = password;
+
+        // Write to .env and live process vars
+        updateEnvVars(uri, 'ecbot', password, DEFAULT_DB_NAME);
+
+        // ✅ Force immediate DB connection test
+        await DatabaseHandler.ensureConnection();
 
         return true;
     } catch (err) {
@@ -280,46 +327,19 @@ async function startMongoDocker(session) {
     }
 }
 
-/**
- * Checks if MongoDB is accepting connections on the given port.
- *
- * @param {string} host - Host address.
- * @param {number} port - MongoDB port.
- * @returns {Promise<boolean>}
- */
-function checkMongoReady(host, port) {
-    return new Promise(resolve => {
-        const socket = net.createConnection(port, host);
-        socket.once('connect', () => {
-            socket.destroy();
-            resolve(true);
-        });
-        socket.once('error', () => resolve(false));
-    });
-}
-
-/**
- * Asks the user to configure roles for the bot.
- */
 async function askRoles(interactionOrMsg, session) {
     const replyFunc = interactionOrMsg.update ? interactionOrMsg.update.bind(interactionOrMsg) : interactionOrMsg.reply.bind(interactionOrMsg);
+    const autoBtn = new ButtonBuilder().setCustomId('setup_roles_autocreate').setLabel('✨ Auto-create Roles').setStyle(ButtonStyle.Primary);
 
-    const autoBtn = new ButtonBuilder()
-        .setCustomId('setup_roles_autocreate')
-        .setLabel('✨ Auto-create Roles')
-        .setStyle(ButtonStyle.Primary);
-
-    const embed = new EmbedBuilder()
-        .setTitle('Step 4️⃣ - Role Setup')
-        .setDescription('Eclipse-Bot needs **Moderator** and **Player** roles.\nYou can create them automatically or assign existing roles later.')
-        .setColor(0x5865F2);
-
-    await replyFunc({embeds: [embed], components: [new ActionRowBuilder().addComponents(autoBtn)]});
+    await replyFunc({
+        embeds: [new EmbedBuilder().setTitle('Step 4️⃣ - Role Setup').setDescription('Eclipse-Bot needs **Moderator** and **Player** roles.').setColor(0x5865F2)],
+        components: [new ActionRowBuilder().addComponents(autoBtn)]
+    });
     session.step = 5;
 }
 
 /**
- * Finalizes the configuration and saves it to the database.
+ * Saves final guild configuration to DB and completes setup.
  */
 async function finalizeConfig(interaction, session) {
     const config = {
@@ -336,39 +356,11 @@ async function finalizeConfig(interaction, session) {
 
     await saveGuildConfig(config);
 
-    const embed = new EmbedBuilder()
-        .setTitle('✅ Setup Complete')
-        .setDescription(`Eclipse-Bot is ready to host Archipelago servers!\n\n**Mongo URI:** \`${config.mongoUri}\``)
-        .setColor(0x57F287);
-
-    await interaction.update({embeds: [embed], components: []});
+    await interaction.update({
+        embeds: [new EmbedBuilder().setTitle('✅ Setup Complete').setDescription(`Eclipse-Bot is ready!\n\n**Mongo URI:** \`${config.mongoUri}\``).setColor(0x57F287)],
+        components: []
+    });
     setupSessions.delete(interaction.user.id);
 
     logger.info(`✅ Setup completed for guild ${config.guildId}`);
-
-    // ✅ Send setup summary DM
-    try {
-        const superUser = await interaction.client.users.fetch(interaction.user.id);
-        await superUser.send({
-            embeds: [
-                new EmbedBuilder()
-                    .setTitle('📜 Eclipse-Bot Setup Summary')
-                    .setColor(0x00FFAA)
-                    .setDescription('Here are your final setup details:')
-                    .addFields(
-                        {name: 'Guild ID', value: config.guildId, inline: true},
-                        {name: 'Admin ID', value: config.adminId, inline: true},
-                        {name: 'Category ID', value: config.categoryId, inline: true},
-                        {name: 'Mod Role ID', value: config.modRoleId || 'Not Set', inline: true},
-                        {name: 'Player Role ID', value: config.playerRoleId || 'Not Set', inline: true},
-                        {name: 'Mongo URI', value: `\`${config.mongoUri}\``, inline: false},
-                        {name: 'Port Range', value: `${config.portRange.start}-${config.portRange.end}`, inline: true}
-                    )
-                    .setFooter({text: '⚠️ Keep this information safe, especially the MongoDB credentials.'})
-            ]
-        });
-        logger.info('📩 Setup summary sent to SuperUser.');
-    } catch (err) {
-        logger.error('❌ Failed to send SuperUser setup summary DM:', err);
-    }
 }
