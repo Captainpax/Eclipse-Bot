@@ -18,7 +18,13 @@ import {Routes} from 'discord-api-types/v10';
 import logger from '../../../system/log/logHandler.mjs';
 
 export class registerCommandHandlers {
-    constructor(client, token, clientId, guildId) {
+    /**
+     * @param {import('discord.js').Client} client
+     * @param {string} token - Discord bot token
+     * @param {string} clientId - Discord application ID
+     * @param {string|null} guildId - Guild ID for instant slash registration (optional)
+     */
+    constructor(client, token, clientId, guildId = null) {
         this.client = client;
         this.token = token;
         this.clientId = clientId;
@@ -29,11 +35,13 @@ export class registerCommandHandlers {
     }
 
     /**
-     * Recursively reads a directory and loads .mjs command files.
+     * Recursively reads a directory and dynamically imports .mjs command files.
      * @param {string} dir
      * @param {'slash'|'text'} type
      */
     async loadCommandsFromDir(dir, type = 'slash') {
+        if (!fs.existsSync(dir)) return;
+
         const entries = fs.readdirSync(dir, {withFileTypes: true});
 
         for (const entry of entries) {
@@ -41,28 +49,34 @@ export class registerCommandHandlers {
 
             if (entry.isDirectory()) {
                 await this.loadCommandsFromDir(fullPath, type);
-            } else if (entry.name.endsWith('.mjs')) {
-                try {
-                    const cmdModule = await import(`file://${fullPath}?update=${Date.now()}`);
+                continue;
+            }
 
-                    if (type === 'slash' && cmdModule?.data && cmdModule?.execute) {
-                        this.commands.set(cmdModule.data.name, cmdModule);
-                        logger.debug(`✅ [Slash] Loaded command: ${cmdModule.data.name}`);
-                    }
+            if (!entry.name.endsWith('.mjs')) continue;
+            if (entry.name.startsWith('_') || entry.name === 'index.mjs') continue;
 
-                    if (type === 'text' && cmdModule?.name && cmdModule?.execute) {
-                        this.textCommands.set(cmdModule.name.toLowerCase(), cmdModule);
-                        logger.debug(`💬 [Text] Loaded command: ${cmdModule.name}`);
-                    }
-                } catch (err) {
-                    logger.error(`❌ Failed to load command file: ${entry.name} (${err.message})`);
+            try {
+                // Bust Node's import cache to support live reload
+                const modulePath = `file://${fullPath}?v=${Date.now()}`;
+                const cmdModule = await import(modulePath);
+
+                if (type === 'slash' && cmdModule?.data && cmdModule?.execute) {
+                    this.commands.set(cmdModule.data.name, cmdModule);
+                    logger.debug(`✅ [Slash] Loaded command: ${cmdModule.data.name}`);
+                } else if (type === 'text' && cmdModule?.name && cmdModule?.execute) {
+                    this.textCommands.set(cmdModule.name.toLowerCase(), cmdModule);
+                    logger.debug(`💬 [Text] Loaded command: ${cmdModule.name}`);
+                } else {
+                    logger.warn(`⚠️ Skipped ${entry.name} (missing required exports).`);
                 }
+            } catch (err) {
+                logger.error(`❌ Failed to load command file: ${entry.name} (${err.message})`);
             }
         }
     }
 
     /**
-     * Registers all slash and text commands.
+     * Registers all slash and text commands with Discord API.
      */
     async register() {
         const slashDir = path.resolve('./services/discord/commands');
@@ -70,31 +84,29 @@ export class registerCommandHandlers {
 
         logger.info('🔍 Scanning command directories...');
         await this.loadCommandsFromDir(slashDir, 'slash');
-        if (fs.existsSync(textDir)) {
-            await this.loadCommandsFromDir(textDir, 'text');
-        }
+        await this.loadCommandsFromDir(textDir, 'text');
 
+        // Attach loaded commands to client
         this.client.commands = this.commands;
         this.client.textCommands = this.textCommands;
 
-        // Build list for Discord API
+        // Build array for API
         const commandList = Array.from(this.commands.values()).map(cmd => cmd.data.toJSON());
-
-        // Extra debug logging
         logger.debug(`📦 Slash commands loaded: ${Array.from(this.commands.keys()).join(', ') || 'None'}`);
         logger.debug(`📦 Text commands loaded: ${Array.from(this.textCommands.keys()).join(', ') || 'None'}`);
 
+        // Prepare REST
         const rest = new REST({version: '10'}).setToken(this.token);
         const route = this.guildId
             ? Routes.applicationGuildCommands(this.clientId, this.guildId)
             : Routes.applicationCommands(this.clientId);
 
         try {
-            logger.info(`📡 Registering ${commandList.length} slash command(s) with Discord API...`);
+            logger.info(`📡 Registering ${commandList.length} slash command(s) (${this.guildId ? 'Guild' : 'Global'})...`);
             await rest.put(route, {body: commandList});
             logger.success(`✅ Slash commands registered successfully (${this.guildId ? 'Guild' : 'Global'})`);
         } catch (error) {
-            logger.error(`❌ Failed to register slash commands: ${error}`);
+            logger.error(`❌ Failed to register slash commands: ${error.message}`);
         }
 
         logger.info(`💬 Loaded ${this.textCommands.size} text command(s).`);

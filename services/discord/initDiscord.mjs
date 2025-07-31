@@ -1,4 +1,6 @@
 import {Client, GatewayIntentBits, Partials} from 'discord.js';
+import fs from 'fs';
+import path from 'path';
 import logger from '../../system/log/logHandler.mjs';
 import {ChannelMessageRouter} from './guilds/channelHandler.mjs';
 import {registerCommandHandlers} from './commands/commandHandler.mjs';
@@ -6,9 +8,26 @@ import {getGuildConfig} from './users/usersHandler.mjs';
 import {handleSetupInteraction, handleSetupMessage, runFirstTimeSetup} from './setup.mjs';
 
 /**
- * Initializes the Discord bot, sets up commands and message handling.
- * Handles first-time setup via SuperUser DM if no guild config exists.
- *
+ * Updates .env file with a new GUILD_ID
+ * @param {string} guildId
+ */
+function updateEnvGuildId(guildId) {
+    const envPath = path.resolve('./.env');
+    let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+
+    // Remove old GUILD_ID if exists
+    content = content.replace(/GUILD_ID=.*/g, '').trim();
+
+    // Append new GUILD_ID
+    content += `\nGUILD_ID=${guildId}\n`;
+    fs.writeFileSync(envPath, content, 'utf8');
+
+    process.env.GUILD_ID = guildId;
+    logger.info(`✅ Saved GUILD_ID=${guildId} to .env`);
+}
+
+/**
+ * Initializes the Discord bot and ensures setup runs only on fresh install.
  * @param {Object} env - Environment variables
  */
 export default async function initDiscord(env) {
@@ -27,49 +46,69 @@ export default async function initDiscord(env) {
         logger.success(`🤖 Logged in as ${client.user.tag}`);
 
         try {
-            // If a GUILD_ID is provided, try to load config
+            let config = null;
+
             if (env.GUILD_ID) {
-                const config = await getGuildConfig(env.GUILD_ID);
-                if (!config) {
-                    logger.warn(`⚠️ No config found for guild ${env.GUILD_ID}. Initiating SuperUser setup...`);
-                    await runFirstTimeSetup(client);
-                } else {
-                    logger.info(`🛠️ Loaded config for guild ${env.GUILD_ID}`);
-                }
+                config = await getGuildConfig(env.GUILD_ID);
             } else {
-                // No GUILD_ID means fresh install → DM SuperUser
-                logger.info('ℹ️ No GUILD_ID specified. Starting first-time setup via SuperUser DM...');
+                // Try to find any existing guild config if env var is missing
+                const configs = await getGuildConfig(); // should return array if no ID is provided
+                if (Array.isArray(configs) && configs.length > 0) {
+                    config = configs[0];
+                    updateEnvGuildId(config.guildId);
+                }
+            }
+
+            if (!config || !config.bootstrapped) {
+                logger.warn(`⚠️ No bootstrapped config found. Initiating SuperUser setup wizard...`);
                 await runFirstTimeSetup(client);
+            } else {
+                logger.info(`✅ Existing guild configuration found (Guild ID: ${config.guildId}). Skipping setup wizard.`);
             }
         } catch (err) {
             logger.error('❌ Error during initial setup check:', err);
-            logger.warn('⚠️ Attempting to fall back to SuperUser setup...');
+            logger.warn('⚠️ Falling back to SuperUser setup wizard...');
             try {
                 await runFirstTimeSetup(client);
             } catch (setupErr) {
-                logger.error('❌ Failed to initiate setup:', setupErr);
+                logger.error('❌ Failed to initiate setup wizard:', setupErr);
             }
+        }
+
+        // Register slash commands
+        const handler = new registerCommandHandlers(
+            client,
+            env.DISCORD_TOKEN,
+            env.DISCORD_CLIENT_ID,
+            process.env.GUILD_ID || null
+        );
+
+        try {
+            await handler.register();
+            logger.success(`✅ Slash commands registered (${process.env.GUILD_ID ? 'Guild' : 'Global'} mode)`);
+        } catch (err) {
+            logger.error('❌ Failed to register slash commands:', err);
         }
     });
 
     // Message events
-    client.on('messageCreate', (message) => {
+    client.on('messageCreate', async (message) => {
         try {
-            handleSetupMessage(message);
+            await handleSetupMessage(message);
         } catch (err) {
             logger.error('❌ Error in setup message handler:', err);
         }
     });
 
-    client.on('messageCreate', (message) => {
+    client.on('messageCreate', async (message) => {
         try {
-            ChannelMessageRouter.handle(message, env, client);
+            await ChannelMessageRouter.handle(message, env, client);
         } catch (err) {
             logger.error('❌ Error in channel message router:', err);
         }
     });
 
-    // Setup button & dropdown interactions
+    // Button & dropdown interactions
     client.on('interactionCreate', async (interaction) => {
         try {
             if (interaction.isButton() || interaction.isStringSelectMenu()) {
@@ -78,25 +117,16 @@ export default async function initDiscord(env) {
         } catch (err) {
             logger.error('❌ Setup interaction failed:', err);
             if (!interaction.replied) {
-                await interaction.reply({content: '❌ Setup error, please retry.', ephemeral: true});
+                await interaction.reply({content: '❌ Setup error, please retry.', flags: 64}).catch(() => {
+                });
             }
         }
     });
 
     // Log in to Discord
-    await client.login(env.DISCORD_TOKEN);
-
-    // Register slash commands globally if no guild specified
-    const handler = new registerCommandHandlers(
-        client,
-        env.DISCORD_TOKEN,
-        env.DISCORD_CLIENT_ID,
-        env.GUILD_ID || null
-    );
-
     try {
-        await handler.register();
+        await client.login(env.DISCORD_TOKEN);
     } catch (err) {
-        logger.error('❌ Failed to register slash commands:', err);
+        logger.error('❌ Failed to log into Discord:', err);
     }
 }

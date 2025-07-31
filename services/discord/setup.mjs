@@ -1,15 +1,16 @@
+
 /**
  * @fileoverview
- * Eclipse-Bot Setup Wizard (Dynamic Env + Network Join + Debug + Confirm Step)
+ * Eclipse-Bot Setup Wizard (Enhanced UX + Docker Embed + Role Selection)
  *
  * Handles first-time setup:
  *  ✅ Ensures both bot & Mongo run on `ecbot-net`
  *  ✅ Deploys MongoDB container dynamically
  *  ✅ Writes credentials to .env and updates runtime
  *  ✅ Verifies DB connection before finalizing
- *  ✅ Creates roles and essential channels
- *  ✅ Saves structured config with arrays
- *  ✅ Optionally restarts bot container
+ *  ✅ Allows user to pick existing roles or generate new ones (2-step dropdown)
+ *  ✅ Creates base channels and saves structured config
+ *  ✅ Uses embedded messages for cleaner flow
  */
 
 import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder} from 'discord.js';
@@ -18,7 +19,6 @@ import fs from 'fs';
 import os from 'os';
 import Docker from 'dockerode';
 import net from 'net';
-import {exec} from 'child_process';
 
 import logger from '../../system/log/logHandler.mjs';
 import {saveGuildConfig} from './users/usersHandler.mjs';
@@ -32,23 +32,22 @@ const DOCKER_NETWORK_NAME = 'ecbot-net';
 const DEFAULT_DB_NAME = 'ecbot';
 const BOT_CONTAINER_NAME = 'eclipse-bot';
 
-/* ----------------------- Helper Functions ----------------------- */
+/* -------------------------------------------------
+   Helper Functions
+---------------------------------------------------*/
 
 function reloadEnv() {
     dotenv.config({override: true});
-    logger.debug('🔄 .env reloaded');
 }
 
 function updateEnvVars(uri, user, pass, dbName = DEFAULT_DB_NAME) {
     const envPath = './.env';
     let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-
     content = content
         .replace(/MONGO_URI=.*/g, '')
         .replace(/MONGO_USER=.*/g, '')
         .replace(/MONGO_PASS=.*/g, '')
         .replace(/MONGO_DB_NAME=.*/g, '');
-
     content += `\nMONGO_URI=${uri}\nMONGO_USER=${user}\nMONGO_PASS=${pass}\nMONGO_DB_NAME=${dbName}\n`;
     fs.writeFileSync(envPath, content.trim() + '\n', 'utf8');
 
@@ -72,9 +71,7 @@ async function ensureNetwork() {
         const network = docker.getNetwork(DOCKER_NETWORK_NAME);
         const info = await network.inspect();
         const connected = Object.values(info.Containers ?? {}).some(c => c.Name === BOT_CONTAINER_NAME);
-
         if (!connected) {
-            logger.warn('🔗 Connecting bot to network...');
             await network.connect({Container: containerId});
             logger.info('✅ Bot joined ecbot-net');
         }
@@ -94,12 +91,13 @@ function checkMongoReady(host, port) {
     });
 }
 
-/* ----------------------- Setup Wizard ----------------------- */
+/* -------------------------------------------------
+   Setup Wizard Core
+---------------------------------------------------*/
 
 export async function runFirstTimeSetup(client) {
     const superUserId = process.env.SUPER_USER_ID;
     if (!superUserId) return logger.error('❌ SUPER_USER_ID not set');
-
     const user = await client.users.fetch(superUserId).catch(() => null);
     if (!user) return logger.error('❌ SuperUser not found');
 
@@ -108,7 +106,7 @@ export async function runFirstTimeSetup(client) {
 
     const embed = new EmbedBuilder()
         .setTitle('🔧 Eclipse-Bot Setup Wizard')
-        .setDescription('Press **Start Setup** to begin.')
+        .setDescription('Press **Start Setup** to begin configuration.')
         .setColor(0x5865F2);
 
     const button = new ButtonBuilder()
@@ -117,7 +115,6 @@ export async function runFirstTimeSetup(client) {
         .setStyle(ButtonStyle.Primary);
 
     await dm.send({embeds: [embed], components: [new ActionRowBuilder().addComponents(button)]});
-    logger.info('📩 Setup wizard DM sent to SuperUser.');
 }
 
 export async function handleSetupInteraction(interaction, client) {
@@ -137,37 +134,45 @@ export async function handleSetupInteraction(interaction, client) {
                 return handleDockerMongo(interaction, session);
             case 'setup_db_manual':
                 return askMongoUri(interaction, session);
+            case 'setup_roles_existing':
+                return pickExistingRoles(interaction, session, client, 'mod');
+            case 'setup_roles_select_mod':
+                return handleModRoleSelected(interaction, session, client);
+            case 'setup_roles_select_player':
+                return handlePlayerRoleSelected(interaction, session);
             case 'setup_roles_autocreate':
                 return autoCreateRoles(interaction, session, client);
             case 'setup_confirm_config':
                 return finalizeConfig(interaction, session, client);
+            default:
+                logger.warn(`⚠️ Unknown setup step: ${interaction.customId}`);
         }
     } catch (err) {
         logger.error(`❌ Setup step failed: ${err.message}`);
-        if (!interaction.deferred) interaction.reply({content: '❌ Setup error.', flags: 64}).catch(() => {
-        });
+        if (!interaction.deferred && !interaction.replied) {
+            interaction.reply({content: '❌ Setup error, please retry.', flags: 64}).catch(() => {
+            });
+        }
     }
 }
 
 export async function handleSetupMessage(message) {
     const session = setupSessions.get(message.author.id);
     if (!session || session.step !== 'await_mongo_uri') return;
-
     session.choices.mongoUri = message.content.trim();
     await askRoles(message, session);
 }
 
-/* ----------------------- Steps ----------------------- */
+/* -------------------------------------------------
+   Steps
+---------------------------------------------------*/
 
 async function handleServerSelection(interaction, client, session) {
     await interaction.deferReply({flags: 64});
-
     const guildChoices = client.guilds.cache
         .filter(g => g.ownerId === interaction.user.id)
         .map(g => ({label: g.name, description: `ID: ${g.id}`, value: g.id}));
-
-    if (!guildChoices.length)
-        return interaction.editReply({content: '❌ No owned servers found.'});
+    if (!guildChoices.length) return interaction.editReply({content: '❌ No owned servers found.'});
 
     const menu = new StringSelectMenuBuilder()
         .setCustomId('setup_select_guild')
@@ -176,32 +181,26 @@ async function handleServerSelection(interaction, client, session) {
 
     session.step = 2;
     return interaction.editReply({
-        embeds: [new EmbedBuilder().setTitle('Step 1️⃣ - Server').setDescription('Choose a server.').setColor(0x5865F2)],
+        embeds: [new EmbedBuilder().setTitle('Step 1️⃣ - Server').setDescription('Choose a server to configure.').setColor(0x5865F2)],
         components: [new ActionRowBuilder().addComponents(menu)]
     });
 }
 
-async function handleCategorySelection(interaction, client, session) {
-    await interaction.deferUpdate();
+async function handleCategorySelection(interaction, client, session, skipDefer = false) {
+    if (!skipDefer) await interaction.deferUpdate();
     session.choices.guildId = interaction.values[0];
-
     const guild = await client.guilds.fetch(session.choices.guildId);
     const categories = guild.channels.cache.filter(ch => ch.type === 4);
     const catChoices = categories.map(c => ({label: c.name, value: c.id}));
 
-    const menu = new StringSelectMenuBuilder()
-        .setCustomId('setup_select_category')
+    const menu = new StringSelectMenuBuilder().setCustomId('setup_select_category')
         .setPlaceholder('Choose or create category')
         .addOptions(catChoices.length ? catChoices : [{label: 'None found', value: 'none'}]);
-
-    const createBtn = new ButtonBuilder()
-        .setCustomId('setup_create_category')
-        .setLabel('➕ Create New Category')
-        .setStyle(ButtonStyle.Secondary);
-
+    const createBtn = new ButtonBuilder().setCustomId('setup_create_category').setLabel('➕ Create New Category').setStyle(ButtonStyle.Secondary);
     session.step = 3;
+
     return interaction.editReply({
-        embeds: [new EmbedBuilder().setTitle('Step 2️⃣ - Category').setDescription('Choose a text category.').setColor(0x5865F2)],
+        embeds: [new EmbedBuilder().setTitle('Step 2️⃣ - Category').setDescription('Choose a text category or create a new one.').setColor(0x5865F2)],
         components: [new ActionRowBuilder().addComponents(menu), new ActionRowBuilder().addComponents(createBtn)]
     });
 }
@@ -209,53 +208,47 @@ async function handleCategorySelection(interaction, client, session) {
 async function handleCategoryChoice(interaction, client, session) {
     await interaction.deferUpdate();
     const guild = await client.guilds.fetch(session.choices.guildId);
-
     if (interaction.customId === 'setup_create_category') {
         const cat = await guild.channels.create({name: 'Eclipse-Bot', type: 4});
         session.choices.categoryId = cat.id;
     } else {
         session.choices.categoryId = interaction.values[0];
     }
-
     return askDatabaseSetup(interaction, session);
+}
+
+async function askDatabaseSetup(interaction, session) {
+    const dockerBtn = new ButtonBuilder().setCustomId('setup_db_docker').setLabel('🐳 Use Docker').setStyle(ButtonStyle.Primary);
+    const manualBtn = new ButtonBuilder().setCustomId('setup_db_manual').setLabel('🔗 Enter URI').setStyle(ButtonStyle.Secondary);
+    session.step = 4;
+    return interaction.editReply({
+        embeds: [new EmbedBuilder().setTitle('Step 3️⃣ - Database').setDescription('Choose a MongoDB setup method.').setColor(0x5865F2)],
+        components: [new ActionRowBuilder().addComponents(dockerBtn, manualBtn)]
+    });
 }
 
 async function handleDockerMongo(interaction, session) {
     await interaction.deferReply({flags: 64});
-    await session.dm.send('🐳 Starting Mongo container...');
-
+    await interaction.editReply({embeds: [new EmbedBuilder().setTitle('🐳 Starting Mongo container...').setColor(0x3498DB)]});
     const success = await startMongoDocker(session);
-    if (!success) return session.dm.send('❌ Mongo container failed.');
-
-    await session.dm.send('✅ Mongo running! Connecting...');
+    if (!success) return interaction.editReply({embeds: [new EmbedBuilder().setTitle('❌ Mongo container failed.').setColor(0xE74C3C)]});
     await connectDatabase();
-
-    await session.dm.send('✅ Database connection established.');
-    await askRoles(interaction, session);
-
-    if (process.env.AUTO_RESTART === 'true') {
-        logger.info('♻️ Restarting bot...');
-        exec(`docker restart ${BOT_CONTAINER_NAME}`);
-    }
+    return askRoles(interaction, session);
 }
 
 async function startMongoDocker(session) {
     try {
         const password = Math.random().toString(36).slice(-10);
         const containerName = 'ecbot-mongo';
-
         await ensureNetwork();
         try {
             await docker.getContainer(containerName).remove({force: true});
         } catch (_) {
         }
-
-        await session.dm.send('📦 Pulling Mongo...');
         await new Promise((resolve, reject) => docker.pull('mongo:latest', (err, stream) => {
             if (err) return reject(err);
             docker.modem.followProgress(stream, () => resolve());
         }));
-
         const container = await docker.createContainer({
             Image: 'mongo:latest',
             name: containerName,
@@ -266,7 +259,6 @@ async function startMongoDocker(session) {
             Cmd: ["mongod", "--bind_ip_all", "--auth"]
         });
         await container.start();
-
         let ready = false;
         for (let i = 0; i < 10; i++) {
             if (await checkMongoReady('ecbot-mongo', 27017)) {
@@ -276,12 +268,10 @@ async function startMongoDocker(session) {
             await new Promise(r => setTimeout(r, 3000));
         }
         if (!ready) throw new Error("MongoDB didn't start in time");
-
         const uri = `mongodb://ecbot:${password}@ecbot-mongo:27017/${DEFAULT_DB_NAME}?authSource=admin`;
         session.choices.mongoUri = uri;
         session.choices.mongoUser = 'ecbot';
         session.choices.mongoPass = password;
-
         updateEnvVars(uri, 'ecbot', password);
         return true;
     } catch (err) {
@@ -290,38 +280,44 @@ async function startMongoDocker(session) {
     }
 }
 
-async function askDatabaseSetup(interaction, session) {
-    const dockerBtn = new ButtonBuilder().setCustomId('setup_db_docker').setLabel('🐳 Use Docker').setStyle(ButtonStyle.Primary);
-    const manualBtn = new ButtonBuilder().setCustomId('setup_db_manual').setLabel('🔗 Enter URI').setStyle(ButtonStyle.Secondary);
-
-    session.step = 4;
-    return interaction.editReply({
-        embeds: [new EmbedBuilder().setTitle('Step 3️⃣ - Database').setDescription('Choose a Mongo setup method.').setColor(0x5865F2)],
-        components: [new ActionRowBuilder().addComponents(dockerBtn, manualBtn)]
-    });
-}
-
-async function askMongoUri(interaction, session) {
-    await interaction.deferUpdate();
-    session.step = 'await_mongo_uri';
-    return interaction.editReply({
-        embeds: [new EmbedBuilder().setTitle('Step 3️⃣ - Manual Mongo URI').setDescription('Send your MongoDB URI in chat.').setColor(0x5865F2)],
-        components: []
-    });
-}
-
-async function askRoles(interactionOrMsg, session) {
-    const replyFunc = interactionOrMsg.editReply
-        ? interactionOrMsg.editReply.bind(interactionOrMsg)
-        : interactionOrMsg.reply.bind(interactionOrMsg);
-
+async function askRoles(interaction, session) {
+    const existingBtn = new ButtonBuilder().setCustomId('setup_roles_existing').setLabel('🎭 Pick Existing Roles').setStyle(ButtonStyle.Secondary);
     const autoBtn = new ButtonBuilder().setCustomId('setup_roles_autocreate').setLabel('✨ Auto-create Roles').setStyle(ButtonStyle.Primary);
-
     session.step = 5;
-    return replyFunc({
-        embeds: [new EmbedBuilder().setTitle('Step 4️⃣ - Roles').setDescription('Bot needs Moderator & Player roles.').setColor(0x5865F2)],
-        components: [new ActionRowBuilder().addComponents(autoBtn)]
+    return interaction.editReply({
+        embeds: [new EmbedBuilder().setTitle('Step 4️⃣ - Roles').setDescription('Would you like to use existing roles or auto-create them?').setColor(0x5865F2)],
+        components: [new ActionRowBuilder().addComponents(existingBtn, autoBtn)]
     });
+}
+
+async function pickExistingRoles(interaction, session, client, type, skipDefer = false) {
+    if (!skipDefer) await interaction.deferUpdate();
+    const guild = await client.guilds.fetch(session.choices.guildId);
+    const roles = guild.roles.cache.filter(r => r.name !== '@everyone').map(r => ({
+        label: r.name,
+        value: r.id
+    })).slice(0, 25);
+    const roleSelectMenu = new StringSelectMenuBuilder()
+        .setCustomId(type === 'mod' ? 'setup_roles_select_mod' : 'setup_roles_select_player')
+        .setPlaceholder(type === 'mod' ? 'Select Moderator Role' : 'Select Player Role')
+        .addOptions(roles);
+    session.step = type === 'mod' ? 'mod_role' : 'player_role';
+    return interaction.editReply({
+        embeds: [new EmbedBuilder().setTitle(`Select ${type === 'mod' ? 'Moderator' : 'Player'} Role`).setDescription(`Choose a role for **${type}**.`).setColor(0x5865F2)],
+        components: [new ActionRowBuilder().addComponents(roleSelectMenu)]
+    });
+}
+
+async function handleModRoleSelected(interaction, session, client) {
+    await interaction.deferUpdate();
+    session.choices.modRoleId = interaction.values[0];
+    return pickExistingRoles(interaction, session, client, 'player', true);
+}
+
+async function handlePlayerRoleSelected(interaction, session) {
+    await interaction.deferUpdate();
+    session.choices.playerRoleId = interaction.values[0];
+    return confirmConfig(interaction, session);
 }
 
 async function autoCreateRoles(interaction, session, client) {
@@ -330,10 +326,8 @@ async function autoCreateRoles(interaction, session, client) {
         const guild = await client.guilds.fetch(session.choices.guildId);
         const mod = await guild.roles.create({name: 'Eclipse-Mod', color: 'Blue'});
         const player = await guild.roles.create({name: 'Eclipse-Player', color: 'Green'});
-
         session.choices.modRoleId = mod.id;
         session.choices.playerRoleId = player.id;
-
         return confirmConfig(interaction, session);
     } catch (err) {
         logger.error(`❌ Failed to create roles: ${err.message}`);
@@ -341,11 +335,8 @@ async function autoCreateRoles(interaction, session, client) {
     }
 }
 
-/**
- * Shows config summary before saving
- */
 async function confirmConfig(interaction, session) {
-    await interaction.editReply({
+    return interaction.editReply({
         embeds: [new EmbedBuilder()
             .setTitle('Step 5️⃣ - Review Config')
             .setDescription(`Please confirm the following:\n
@@ -361,15 +352,10 @@ async function confirmConfig(interaction, session) {
     });
 }
 
-/**
- * Saves config to DB and finalizes setup
- */
 async function finalizeConfig(interaction, session, client) {
     await interaction.deferUpdate().catch(() => {
     });
     const guild = await client.guilds.fetch(session.choices.guildId);
-
-    // Auto-create base channels
     const consoleCh = await guild.channels.create({name: 'ap-console', type: 0, parent: session.choices.categoryId});
     const logsCh = await guild.channels.create({name: 'ap-logs', type: 0, parent: session.choices.categoryId});
     const waitingCh = await guild.channels.create({
@@ -377,7 +363,6 @@ async function finalizeConfig(interaction, session, client) {
         type: 0,
         parent: session.choices.categoryId
     });
-
     const config = {
         guildId: session.choices.guildId,
         adminId: interaction.user.id,
@@ -385,11 +370,7 @@ async function finalizeConfig(interaction, session, client) {
         portRange: {start: 38200, end: 38300},
         mongoUri: session.choices.mongoUri,
         bootstrapped: true,
-        roles: {
-            admin: [interaction.user.id],
-            mod: [session.choices.modRoleId],
-            player: [session.choices.playerRoleId]
-        },
+        roles: {admin: [interaction.user.id], mod: [session.choices.modRoleId], player: [session.choices.playerRoleId]},
         channels: {
             category: [session.choices.categoryId],
             console: [consoleCh.id],
@@ -397,16 +378,11 @@ async function finalizeConfig(interaction, session, client) {
             waitingRoom: [waitingCh.id]
         }
     };
-
     await connectDatabase();
     await saveGuildConfig(config);
     setupSessions.delete(interaction.user.id);
-
     return interaction.editReply({
-        embeds: [new EmbedBuilder()
-            .setTitle('✅ Setup Complete')
-            .setDescription(`Server is ready!\nMongo URI: \`${config.mongoUri}\``)
-            .setColor(0x57F287)],
+        embeds: [new EmbedBuilder().setTitle('✅ Setup Complete').setDescription(`Server is ready!\nMongo URI: \`${config.mongoUri}\``).setColor(0x57F287)],
         components: []
     });
 }

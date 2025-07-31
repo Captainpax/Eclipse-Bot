@@ -11,9 +11,7 @@
  *    - Safe connection checks with retries
  *    - Unified logging
  *    - Legacy `getUser` alias for backward compatibility
- *
- * Usage Example:
- *    import { saveGuildConfig, upsertPlayer } from './usersHandler.mjs';
+ *    - NEW: getGuildConfig() can return all configs if no ID is passed
  */
 
 import DatabaseHandler from '../../../system/database/databaseHandler.mjs';
@@ -54,8 +52,6 @@ async function safeEnsureConnection() {
 
 /**
  * Creates or updates a Player document by ID.
- * @param {string} playerId - Player's internal ID
- * @param {string} discordId - Discord snowflake ID
  */
 export async function upsertPlayer(playerId, discordId) {
     if (!(await safeEnsureConnection())) return null;
@@ -96,7 +92,6 @@ export async function getPlayer(playerId) {
 
 /**
  * ✅ Legacy alias for backward compatibility
- * Some files still use `getUser`, map it to `getPlayer`
  */
 export async function getUser(playerId) {
     return getPlayer(playerId);
@@ -106,7 +101,6 @@ export async function getUser(playerId) {
 
 /**
  * Saves or updates the configuration for a guild/server.
- * Supports extended fields (roles, channels, fqdn, portRange).
  */
 export async function saveGuildConfig(config) {
     if (!(await safeEnsureConnection())) return null;
@@ -114,11 +108,26 @@ export async function saveGuildConfig(config) {
 }
 
 /**
- * Retrieves a guild's configuration by ID.
+ * Retrieves a guild's configuration.
+ * - If `guildId` is provided → returns that guild config
+ * - If no `guildId` → returns an array of all configs
  */
-export async function getGuildConfig(guildId) {
+export async function getGuildConfig(guildId = null) {
     if (!(await safeEnsureConnection())) return null;
-    return DatabaseHandler.getGuildConfig(guildId);
+
+    if (guildId) {
+        return DatabaseHandler.getGuildConfig(guildId);
+    }
+
+    // Fetch all guild configs
+    try {
+        return DatabaseHandler.getAllGuildConfigs
+            ? DatabaseHandler.getAllGuildConfigs()
+            : DatabaseHandler.getGuildConfig(); // fallback if DB handler handles empty param
+    } catch (err) {
+        logger.error(`❌ Failed to fetch all guild configs: ${err.message}`);
+        return [];
+    }
 }
 
 /**
@@ -144,7 +153,7 @@ export default {
     addPlayerToServer,
     logReceivedItem,
     getPlayer,
-    getUser,             // ✅ Added alias for compatibility
+    getUser,
     saveGuildConfig,
     getGuildConfig,
     addServerInstance,

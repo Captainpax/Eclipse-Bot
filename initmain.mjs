@@ -28,12 +28,16 @@ async function main() {
     logger.info('🚀 Starting Eclipse-Bot...');
 
     try {
-        await initDiscord(env);
-        logger.info('✅ Discord service initialized successfully.');
+        const client = await initDiscord(env); // ✅ returns client
 
-        // Archipelago service will be initialized dynamically per hosted server
-        // or could be wired in here if needed
-        // await initArchipelago(env);
+        if (!client) {
+            throw new Error('Discord client was not returned by initDiscord');
+        }
+
+        // ✅ Wait for bot to be fully ready
+        client.once('ready', () => {
+            logger.success(`🤖 Bot is ready and logged in as ${client.user.tag}`);
+        });
 
     } catch (err) {
         logger.error('🔥 Fatal error in main execution:', err);
@@ -41,4 +45,9 @@ async function main() {
     }
 }
 
-main();
+main().then(() => {
+    logger.success('📦 Command registration process completed.');
+}).catch((err) => {
+    logger.error('❌ Unhandled error in main:', err);
+    process.exit(1);
+});
