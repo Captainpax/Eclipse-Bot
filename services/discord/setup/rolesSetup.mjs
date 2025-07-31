@@ -4,32 +4,20 @@ import logger from '../../../system/log/logHandler.mjs';
 /**
  * Asks the user whether to pick existing roles or create new ones.
  */
-/**
- * Presents the user with a choice to pick existing roles or have them auto created.
- *
- * This helper works with both Interaction objects (during the slash command
- * setup flow) and regular Message objects (during manual Mongo URI entry).
- * When called with a Message, the prompt is sent to the DM channel stored
- * on the session. When called with an Interaction, the existing response
- * is edited in-place.
- *
- * @param {import('discord.js').Interaction | import('discord.js').Message} ctx
- *   The context to respond to
- * @param {Object} session The active setup session
- */
-export async function askRoles(ctx, session) {
-    // Build the common embed and buttons
+export async function askRoles(interaction, session) {
     const existingBtn = new ButtonBuilder()
         .setCustomId('setup_roles_existing')
         .setLabel('🎭 Pick Existing Roles')
         .setStyle(ButtonStyle.Secondary);
+
     const autoBtn = new ButtonBuilder()
         .setCustomId('setup_roles_autocreate')
         .setLabel('✨ Auto-create Roles')
         .setStyle(ButtonStyle.Primary);
 
     session.step = 5;
-    const payload = {
+
+    return interaction.editReply({
         embeds: [
             new EmbedBuilder()
                 .setTitle('Step 4️⃣ - Roles')
@@ -37,25 +25,7 @@ export async function askRoles(ctx, session) {
                 .setColor(0x5865F2)
         ],
         components: [new ActionRowBuilder().addComponents(existingBtn, autoBtn)]
-    };
-    // Determine how to send the prompt
-    // If ctx has editReply (Interaction), edit the previous reply; otherwise send to DM
-    if (typeof ctx.editReply === 'function') {
-        return ctx.editReply(payload);
-    }
-    // If it's a message, send the prompt in the DM channel
-    try {
-        // Prefer the session's DM channel if available
-        if (session.dm && typeof session.dm.send === 'function') {
-            return session.dm.send(payload);
-        }
-        // Fallback: send in the message channel
-        if (ctx.channel && typeof ctx.channel.send === 'function') {
-            return ctx.channel.send(payload);
-        }
-    } catch (err) {
-        logger.error(`❌ Failed to send roles prompt: ${err.message}`);
-    }
+    });
 }
 
 /**

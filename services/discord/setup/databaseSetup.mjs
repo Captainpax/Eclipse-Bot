@@ -8,6 +8,22 @@ import logger from '../../../system/log/logHandler.mjs';
 dotenv.config({override: true});
 
 /**
+ * Utility function to safely reply or follow up to an interaction
+ * to avoid InteractionAlreadyReplied errors.
+ */
+async function safeReply(interaction, payload) {
+    try {
+        if (interaction.replied || interaction.deferred) {
+            return await interaction.followUp(payload);
+        } else {
+            return await interaction.reply(payload);
+        }
+    } catch (err) {
+        logger.error(`❌ Failed to send interaction reply: ${err.message}`);
+    }
+}
+
+/**
  * Prompt user to choose how MongoDB will be configured.
  * @param {import('discord.js').Interaction} interaction
  * @param {Object} session
@@ -15,7 +31,11 @@ dotenv.config({override: true});
 export async function askDatabaseSetup(interaction, session) {
     const embed = new EmbedBuilder()
         .setTitle('📦 Database Setup')
-        .setDescription('Choose how you want to configure MongoDB.\n\n🔧 **Docker**: Let me deploy Mongo automatically.\n📝 **Manual**: You enter your own Mongo URI.')
+        .setDescription(
+            'Choose how you want to configure MongoDB.\n\n' +
+            '🔧 **Docker**: Let me deploy Mongo automatically.\n' +
+            '📝 **Manual**: You enter your own Mongo URI.'
+        )
         .setColor(0x3498db);
 
     const row = new ActionRowBuilder().addComponents(
@@ -29,7 +49,7 @@ export async function askDatabaseSetup(interaction, session) {
             .setStyle(ButtonStyle.Secondary)
     );
 
-    await interaction.reply({embeds: [embed], components: [row], ephemeral: true});
+    await safeReply(interaction, {embeds: [embed], components: [row], ephemeral: true});
 }
 
 /**
@@ -45,8 +65,12 @@ export async function askMongoUri(interaction, session) {
         .setDescription('Please paste your MongoDB connection URI below.\nExample: `mongodb://user:pass@host:port/dbname`')
         .setColor(0xe67e22);
 
-    await interaction.reply({embeds: [embed], ephemeral: true});
-    await session.dm.send({embeds: [embed]});
+    await safeReply(interaction, {embeds: [embed], ephemeral: true});
+    try {
+        await session.dm.send({embeds: [embed]});
+    } catch (err) {
+        logger.error(`❌ Failed to DM user for Mongo URI: ${err.message}`);
+    }
 }
 
 /**
@@ -63,19 +87,32 @@ export async function handleDockerMongo(interaction, session) {
     const mongoDb = 'eclipse-bot';
 
     // Step 1: Pull Mongo image
-    await interaction.reply({content: '📥 Pulling MongoDB image...', ephemeral: true});
-    await docker.pull('mongo:6', {}, (err, stream) => {
-        if (err) return logger.error(`❌ Failed to pull image: ${err.message}`);
-        docker.modem.followProgress(stream, () => {
-            logger.log('✅ Mongo image pulled.');
+    await safeReply(interaction, {content: '📥 Pulling MongoDB image...', ephemeral: true});
+
+    try {
+        await new Promise((resolve, reject) => {
+            docker.pull('mongo:6', (err, stream) => {
+                if (err) return reject(err);
+                docker.modem.followProgress(stream, (err) => {
+                    if (err) return reject(err);
+                    logger.info('✅ Mongo image pulled.');
+                    resolve();
+                });
+            });
         });
-    });
+    } catch (err) {
+        logger.error(`❌ Failed to pull image: ${err.message}`);
+        return safeReply(interaction, {
+            content: '❌ Failed to pull Mongo image. Check Docker permissions.',
+            ephemeral: true
+        });
+    }
 
     // Step 2: Remove old container if exists
     try {
         const old = docker.getContainer(containerName);
         await old.remove({force: true});
-        logger.log('♻️ Removed existing Mongo container');
+        logger.info('♻️ Removed existing Mongo container');
     } catch (_) {
     }
 
@@ -88,49 +125,28 @@ export async function handleDockerMongo(interaction, session) {
             `MONGO_INITDB_ROOT_PASSWORD=${mongoPass}`
         ],
         HostConfig: {
-            PortBindings: {
-                "27017/tcp": [{HostPort: `${mongoPort}`}]
-            },
+            PortBindings: {"27017/tcp": [{HostPort: `${mongoPort}`}]},
             RestartPolicy: {Name: 'always'},
             NetworkMode: 'bridge'
         }
     });
     await container.start();
-    logger.log('🚀 Mongo container started.');
+    logger.info('🚀 Mongo container started.');
 
     // Step 4: Inject .env
-    const newUri = `mongodb://${mongoUser}:${mongoPass}@localhost:${mongoPort}/${mongoDb}?authSource=admin`;
-    // Update the .env and process.env values via helper
-    try {
-        injectMongoUri(newUri);
-        session.choices.mongoUri = newUri;
-        logger.log('✅ Mongo URI written to .env');
-    } catch (e) {
-        logger.error(`❌ Failed to write Mongo URI to .env: ${e.message}`);
-    }
-    await interaction.followUp({content: '✅ Mongo container deployed and connected.', ephemeral: true});
-}
-
-/**
- * Injects the given Mongo URI into the runtime environment and .env file.
- *
- * This helper ensures that the MONGO_URI key exists in the project's
- * `.env` file and updates its value accordingly. It also assigns the
- * same URI to `process.env.MONGO_URI` so subsequent code that relies
- * on environment variables can immediately read it.
- *
- * @param {string} uri The Mongo connection string
- * @returns {string} The URI that was written
- */
-export function injectMongoUri(uri) {
     const envPath = path.resolve(process.cwd(), '.env');
     let envContents = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+    const newUri = `mongodb://${mongoUser}:${mongoPass}@localhost:${mongoPort}/${mongoDb}?authSource=admin`;
+
     if (!envContents.includes('MONGO_URI=')) {
-        envContents += `\nMONGO_URI=${uri}`;
+        envContents += `\nMONGO_URI=${newUri}`;
     } else {
-        envContents = envContents.replace(/MONGO_URI=.*/g, `MONGO_URI=${uri}`);
+        envContents = envContents.replace(/MONGO_URI=.*/g, `MONGO_URI=${newUri}`);
     }
     fs.writeFileSync(envPath, envContents);
-    process.env.MONGO_URI = uri;
-    return uri;
+    process.env.MONGO_URI = newUri;
+    session.choices.mongoUri = newUri;
+
+    logger.info('✅ Mongo URI written to .env');
+    await safeReply(interaction, {content: '✅ Mongo container deployed and connected.', ephemeral: true});
 }
