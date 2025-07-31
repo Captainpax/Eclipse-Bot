@@ -5,7 +5,8 @@ import logger from '../../system/log/logHandler.mjs';
 import {ChannelMessageRouter} from './guilds/channelHandler.mjs';
 import {registerCommandHandlers} from './commands/commandHandler.mjs';
 import {getGuildConfig} from './users/usersHandler.mjs';
-import {handleSetupInteraction, handleSetupMessage, runFirstTimeSetup} from './setup.mjs';
+// Use the new modular setup handler instead of the monolithic setup.mjs
+import {handleSetupInteraction, handleSetupMessage, runFirstTimeSetup} from './setupHandler.mjs';
 
 /**
  * Updates .env file with a new GUILD_ID
@@ -14,14 +15,11 @@ import {handleSetupInteraction, handleSetupMessage, runFirstTimeSetup} from './s
 function updateEnvGuildId(guildId) {
     const envPath = path.resolve('./.env');
     let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-
     // Remove old GUILD_ID if exists
     content = content.replace(/GUILD_ID=.*/g, '').trim();
-
     // Append new GUILD_ID
     content += `\nGUILD_ID=${guildId}\n`;
     fs.writeFileSync(envPath, content, 'utf8');
-
     process.env.GUILD_ID = guildId;
     logger.info(`✅ Saved GUILD_ID=${guildId} to .env`);
 }
@@ -41,24 +39,20 @@ export default async function initDiscord(env) {
         ],
         partials: [Partials.Channel],
     });
-
     client.once('ready', async () => {
         logger.success(`🤖 Logged in as ${client.user.tag}`);
-
         try {
             let config = null;
-
             if (env.GUILD_ID) {
                 config = await getGuildConfig(env.GUILD_ID);
             } else {
                 // Try to find any existing guild config if env var is missing
-                const configs = await getGuildConfig(); // should return array if no ID is provided
+                const configs = await getGuildConfig();
                 if (Array.isArray(configs) && configs.length > 0) {
                     config = configs[0];
                     updateEnvGuildId(config.guildId);
                 }
             }
-
             if (!config || !config.bootstrapped) {
                 logger.warn(`⚠️ No bootstrapped config found. Initiating SuperUser setup wizard...`);
                 await runFirstTimeSetup(client);
@@ -74,7 +68,6 @@ export default async function initDiscord(env) {
                 logger.error('❌ Failed to initiate setup wizard:', setupErr);
             }
         }
-
         // Register slash commands
         const handler = new registerCommandHandlers(
             client,
@@ -82,7 +75,6 @@ export default async function initDiscord(env) {
             env.DISCORD_CLIENT_ID,
             process.env.GUILD_ID || null
         );
-
         try {
             await handler.register();
             logger.success(`✅ Slash commands registered (${process.env.GUILD_ID ? 'Guild' : 'Global'} mode)`);
@@ -90,7 +82,6 @@ export default async function initDiscord(env) {
             logger.error('❌ Failed to register slash commands:', err);
         }
     });
-
     // Message events
     client.on('messageCreate', async (message) => {
         try {
@@ -99,7 +90,6 @@ export default async function initDiscord(env) {
             logger.error('❌ Error in setup message handler:', err);
         }
     });
-
     client.on('messageCreate', async (message) => {
         try {
             await ChannelMessageRouter.handle(message, env, client);
@@ -107,7 +97,6 @@ export default async function initDiscord(env) {
             logger.error('❌ Error in channel message router:', err);
         }
     });
-
     // Button & dropdown interactions
     client.on('interactionCreate', async (interaction) => {
         try {
@@ -122,11 +111,11 @@ export default async function initDiscord(env) {
             }
         }
     });
-
     // Log in to Discord
     try {
         await client.login(env.DISCORD_TOKEN);
     } catch (err) {
         logger.error('❌ Failed to log into Discord:', err);
     }
+    return client;
 }

@@ -1,6 +1,6 @@
 import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} from 'discord.js';
 import {saveGuildConfig} from '../users/usersHandler.mjs';
-import {connectDatabase} from '../../../system/database/databaseHandler.mjs';
+import {connectDatabase} from '../../../../../Downloads/updated_eclipse_bot/system/database/databaseHandler.mjs';
 
 /**
  * Presents a final configuration review screen to the user.

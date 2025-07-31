@@ -16,7 +16,6 @@ import {
     pickExistingRoles
 } from './setup/rolesSetup.mjs';
 import {confirmConfig, finalizeConfig} from './setup/finalizeConfig.mjs';
-
 // Load environment variables so SUPER_USER_ID is available at runtime
 dotenv.config({override: true});
 

@@ -7,7 +7,7 @@ import net from 'net';
 
 // Internal logging and database utilities
 import logger from '../../../system/log/logHandler.mjs';
-import {connectDatabase} from '../../../system/database/databaseHandler.mjs';
+import {connectDatabase} from '../../../../../Downloads/updated_eclipse_bot/system/database/databaseHandler.mjs';
 
 // Load environment variables for potential env modifications
 dotenv.config({override: true});
