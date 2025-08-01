@@ -15,6 +15,9 @@ import {
 import {confirmConfig, finalizeConfig} from './setup/finalizeConfig.mjs';
 import {connectDatabase} from '../../system/database/databaseHandler.mjs';
 
+import {sendWelcomeMessage} from './setup/welcome.mjs';
+import {getGuildConfig} from './users/usersHandler.mjs';
+
 // Load environment variables
 dotenv.config({override: true});
 
@@ -26,10 +29,14 @@ export const setupSessions = new Map();
  */
 export async function runFirstTimeSetup(client) {
     const superUserId = process.env.SUPER_USER_ID;
-    if (!superUserId) return logger.error('❌ SUPER_USER_ID not set');
+    if (!superUserId) {
+        return logger.error('❌ SUPER_USER_ID not set');
+    }
 
     const user = await client.users.fetch(superUserId).catch(() => null);
-    if (!user) return logger.error('❌ SuperUser not found');
+    if (!user) {
+        return logger.error('❌ SuperUser not found');
+    }
 
     const dm = await user.createDM();
     setupSessions.set(user.id, {step: 1, choices: {}, dm});
@@ -37,7 +44,7 @@ export async function runFirstTimeSetup(client) {
     const embed = new EmbedBuilder()
         .setTitle('🔧 Eclipse‑Bot Setup Wizard')
         .setDescription('Press **Start Setup** to begin configuration.')
-        .setColor(0x5865F2);
+        .setColor(0x5865f2);
 
     const button = new ButtonBuilder()
         .setCustomId('setup_start')
@@ -69,19 +76,22 @@ export async function handleSetupInteraction(interaction, client) {
                 return handleCategorySelection(interaction, client, session);
 
             case 'setup_select_category':
-            case 'setup_create_category':
+            case 'setup_create_category': {
                 await handleCategoryChoice(interaction, client, session);
 
                 if (!interaction.deferred && !interaction.replied) {
-                    await interaction.deferUpdate(); // prevent double reply crash
+                    // Prevent double replies on deferred interactions
+                    await interaction.deferUpdate();
                 }
 
                 return askDatabaseSetup(interaction, session);
+            }
 
-            case 'setup_db_docker':
+            case 'setup_db_docker': {
                 await handleDockerMongo(interaction, session);
                 if (connectDatabase) await connectDatabase();
                 return askRoles(interaction, session);
+            }
 
             case 'setup_db_manual':
                 return askMongoUri(interaction, session);
@@ -92,18 +102,38 @@ export async function handleSetupInteraction(interaction, client) {
             case 'setup_roles_select_mod':
                 return handleModRoleSelected(interaction, session, client);
 
-            case 'setup_roles_select_player':
+            case 'setup_roles_select_player': {
                 await handlePlayerRoleSelected(interaction, session);
                 return confirmConfig(interaction, session);
+            }
 
-            case 'setup_roles_autocreate':
+            case 'setup_roles_autocreate': {
                 await autoCreateRoles(interaction, session, client);
                 return confirmConfig(interaction, session);
+            }
 
-            case 'setup_confirm_config':
+            case 'setup_confirm_config': {
+                // Finalise the configuration in the DB
                 await finalizeConfig(interaction, session, client);
+
+                // Post a welcome message to the waiting room using the saved config
+                try {
+                    const config = await getGuildConfig(session.choices.guildId);
+                    if (config) {
+                        await sendWelcomeMessage(client, config);
+                    } else {
+                        logger.warn(
+                            `⚠️ Could not fetch config for guild ${session.choices.guildId} after setup.`
+                        );
+                    }
+                } catch (err) {
+                    logger.error(`❌ Failed to send welcome message: ${err.message}`);
+                }
+
+                // Clean up the in-memory setup session
                 setupSessions.delete(interaction.user.id);
                 return;
+            }
 
             default:
                 logger.warn(`⚠️ Unknown setup step: ${interaction.customId}`);
@@ -111,11 +141,13 @@ export async function handleSetupInteraction(interaction, client) {
     } catch (err) {
         logger.error(`❌ Setup step failed: ${err.message}`);
         if (!interaction.deferred && !interaction.replied) {
-            await interaction.reply({
-                content: '❌ Setup error, please retry.',
-                flags: 64
-            }).catch(() => {
-            });
+            await interaction
+                .reply({
+                    content: '❌ Setup error, please retry.',
+                    flags: 64
+                })
+                .catch(() => {
+                });
         }
     }
 }
