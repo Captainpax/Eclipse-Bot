@@ -38,9 +38,11 @@ export default async function initDiscord(env) {
 
         let config = null;
         try {
+            // Load existing config if GUILD_ID is defined
             if (env.GUILD_ID) {
                 config = await getGuildConfig(env.GUILD_ID);
             } else {
+                // Otherwise try to auto-select the first config, or prompt setup
                 const configs = await getGuildConfig();
                 if (Array.isArray(configs) && configs.length > 0) {
                     config = configs[0];
@@ -49,13 +51,13 @@ export default async function initDiscord(env) {
             }
 
             if (!config || !config.bootstrapped) {
-                logger.warn(`⚠️ No bootstrapped config found. Initiating SuperUser setup wizard...`);
+                logger.warn(`⚠️ No bootstrapped config found. Initiating SuperUser setup wizard…`);
                 await runFirstTimeSetup(client);
             } else {
                 logger.info(`✅ Existing guild configuration found (Guild ID: ${config.guildId}). Skipping setup wizard.`);
             }
 
-            // Fetch log channel
+            // Fetch the logs channel if configured
             if (config?.logsChannelId) {
                 logChannel = await client.channels.fetch(config.logsChannelId).catch(() => null);
             }
@@ -63,7 +65,7 @@ export default async function initDiscord(env) {
             logger.error('❌ Error during initial setup check:', err);
         }
 
-        // Register slash commands
+        // Register slash commands: uses guild ID if available
         const handler = new registerCommandHandlers(
             client,
             env.DISCORD_TOKEN,
@@ -83,7 +85,7 @@ export default async function initDiscord(env) {
         }
     });
 
-    // Setup messages
+    // Setup messages: delegates to run the initial setup wizard
     client.on('messageCreate', async (message) => {
         try {
             await handleSetupMessage(message);
@@ -106,7 +108,7 @@ export default async function initDiscord(env) {
         if (!cmd) return;
 
         try {
-            // Send structured log embed
+            // Log text command execution
             if (logChannel?.isTextBased()) {
                 const embed = new EmbedBuilder()
                     .setTitle('📝 Text Command Executed')
@@ -137,15 +139,42 @@ export default async function initDiscord(env) {
         try {
             // Slash command handling
             if (interaction.isChatInputCommand()) {
-                const command = client.commands.get(interaction.commandName);
-                if (!command) return;
+                // Determine the actual command module to execute. For grouped
+                // slash commands (e.g. /ec link), the top-level commandName will be
+                // the group ("ec"). In that case we need to extract the subcommand
+                // name via interaction.options.getSubcommand() and look it up in
+                // client.commands. If the command is not a grouped command, the
+                // interaction.commandName will match the actual command.
+                let command;
+                if (interaction.commandName === 'ec' && typeof interaction.options.getSubcommand === 'function') {
+                    try {
+                        const subName = interaction.options.getSubcommand();
+                        command = client.commands.get(subName);
+                    } catch {
+                        // If subcommand parsing fails just bail out
+                        command = null;
+                    }
+                } else {
+                    command = client.commands.get(interaction.commandName);
+                }
 
+                // If no matching command or execute function, skip
+                if (!command || typeof command.execute !== 'function') return;
+
+                // Send structured log embed for slash command execution
                 if (logChannel?.isTextBased()) {
                     const embed = new EmbedBuilder()
                         .setTitle('💻 Slash Command Executed')
                         .setColor(0x5865F2)
                         .addFields(
-                            {name: 'Command', value: `/${interaction.commandName}`, inline: true},
+                            {
+                                name: 'Command',
+                                value:
+                                    interaction.commandName === 'ec'
+                                        ? `/ec ${interaction.options.getSubcommand()}`
+                                        : `/${interaction.commandName}`,
+                                inline: true
+                            },
                             {name: 'User', value: `<@${interaction.user.id}>`, inline: true}
                         )
                         .setTimestamp();
@@ -155,33 +184,43 @@ export default async function initDiscord(env) {
                 try {
                     await command.execute(interaction);
                     if (logChannel?.isTextBased()) {
-                        await logChannel.send(`✅ Slash command \`/${interaction.commandName}\` completed successfully.`);
+                        const cmdLabel =
+                            interaction.commandName === 'ec'
+                                ? `/ec ${interaction.options.getSubcommand()}`
+                                : `/${interaction.commandName}`;
+                        await logChannel.send(`✅ Slash command \`${cmdLabel}\` completed successfully.`);
                     }
                 } catch (cmdErr) {
-                    logger.error(`❌ Command '${interaction.commandName}' failed: ${cmdErr.message}`);
+                    const cmdLabel =
+                        interaction.commandName === 'ec' && typeof interaction.options.getSubcommand === 'function'
+                            ? `/ec ${interaction.options.getSubcommand()}`
+                            : `/${interaction.commandName}`;
+                    logger.error(`❌ Command '${cmdLabel}' failed: ${cmdErr.message}`);
                     if (!interaction.replied && !interaction.deferred) {
                         await interaction.reply({content: '❌ There was an error executing this command.', flags: 64});
                     }
                     if (logChannel?.isTextBased()) {
-                        await logChannel.send(`❌ Slash command \`/${interaction.commandName}\` failed: ${cmdErr.message}`);
+                        await logChannel.send(`❌ Slash command \`${cmdLabel}\` failed: ${cmdErr.message}`);
                     }
                 }
             }
 
-            // Buttons & dropdowns
+            // Buttons & dropdowns (setup wizard)
             if (interaction.isButton() || interaction.isStringSelectMenu()) {
                 await handleSetupInteraction(interaction, client);
             }
         } catch (err) {
             logger.error('❌ Interaction handler failed:', err);
             if (!interaction.replied) {
-                await interaction.reply({content: '❌ Interaction error, please retry.', flags: 64}).catch(() => {
-                });
+                await interaction
+                    .reply({content: '❌ Interaction error, please retry.', flags: 64})
+                    .catch(() => {
+                    });
             }
         }
     });
 
-    // Discord login
+    // Log into Discord
     try {
         await client.login(env.DISCORD_TOKEN);
     } catch (err) {

@@ -6,26 +6,25 @@
  * ✅ Imports the actual DatabaseHandler from mongoHandler.mjs
  * ✅ Provides consistent, centralized access to all database operations
  * ✅ Adds safe guards if functions are missing (dynamic import scenarios)
- *
- * Usage Example:
- *   import { saveGuildConfig, getPlayer } from '../../../system/database/databaseHandler.mjs';
  */
 
 import {DatabaseHandler} from './mongo/mongoHandler.mjs';
 import logger from '../log/logHandler.mjs';
 
-/* ========================================================================
-   UTILITY: SAFE CALLER
-   ======================================================================== */
+let missingLogged = new Set();
+
 /**
- * Safely calls a function from DatabaseHandler, logging if undefined.
+ * Safely calls a function from DatabaseHandler, logging if undefined only once.
  * @param {string} fn - The function name in DatabaseHandler
  * @param  {...any} args - Arguments to pass
  * @returns {Promise<any|null>}
  */
 async function safeCall(fn, ...args) {
     if (typeof DatabaseHandler[fn] !== 'function') {
-        logger.error(`⚠️ DatabaseHandler.${fn} is not a function or not yet loaded.`);
+        if (!missingLogged.has(fn)) {
+            logger.warn(`⚠️ DatabaseHandler.${fn} is not ready or not loaded yet.`);
+            missingLogged.add(fn);
+        }
         return null;
     }
     return DatabaseHandler[fn](...args);
@@ -36,7 +35,7 @@ async function safeCall(fn, ...args) {
    ======================================================================== */
 /**
  * Ensures the database connection is established before performing operations.
- * Can be called at bot startup or after env variables change dynamically.
+ * @returns {Promise<mongoose.Connection|null>}
  */
 export async function connectDatabase() {
     return safeCall('ensureConnection');
@@ -47,28 +46,35 @@ export async function connectDatabase() {
    ======================================================================== */
 /**
  * Creates or updates a Player document by ID.
+ * @param {string} playerId
+ * @param {string} discordId
+ * @returns {Promise<object|null>}
  */
 export async function upsertPlayer(playerId, discordId) {
     return safeCall('upsertPlayer', playerId, discordId);
 }
+
 /**
  * Links a guild and its roles to a player profile.
  */
 export async function linkGuildToPlayer(playerId, guildId, roles = []) {
     return safeCall('linkGuildToPlayer', playerId, guildId, roles);
 }
+
 /**
  * Adds a player entry to a server instance.
  */
 export async function addPlayerToServer(playerId, guildId, serverUuid, serverName, role = 'player') {
     return safeCall('addPlayerToServer', playerId, guildId, serverUuid, serverName, role);
 }
+
 /**
  * Logs an item received by a player.
  */
 export async function logReceivedItem(playerId, item) {
     return safeCall('logReceivedItem', playerId, item);
 }
+
 /**
  * Retrieves player data by ID.
  */
@@ -79,27 +85,18 @@ export async function getPlayer(playerId) {
 /* ========================================================================
    SERVER FUNCTIONS
    ======================================================================== */
-/**
- * Saves or updates the configuration for a guild/server.
- */
 export async function saveGuildConfig(config) {
     return safeCall('saveGuildConfig', config);
 }
-/**
- * Retrieves a guild's configuration by ID.
- */
+
 export async function getGuildConfig(guildId) {
     return safeCall('getGuildConfig', guildId);
 }
-/**
- * Adds a new server instance to the guild config.
- */
+
 export async function addServerInstance(guildId, serverData) {
     return safeCall('addServerInstance', guildId, serverData);
 }
-/**
- * Logs an item sent out from a server instance.
- */
+
 export async function logSentItem(guildId, serverUuid, item) {
     return safeCall('logSentItem', guildId, serverUuid, item);
 }
@@ -107,17 +104,12 @@ export async function logSentItem(guildId, serverUuid, item) {
 /* ========================================================================
    MODEL GETTERS
    ======================================================================== */
-/**
- * Retrieves the Player mongoose model.
- */
 export function getPlayerModel() {
     return typeof DatabaseHandler.getPlayerModel === 'function'
         ? DatabaseHandler.getPlayerModel()
         : null;
 }
-/**
- * Retrieves the Server mongoose model.
- */
+
 export function getServerModel() {
     return typeof DatabaseHandler.getServerModel === 'function'
         ? DatabaseHandler.getServerModel()

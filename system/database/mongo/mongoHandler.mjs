@@ -155,10 +155,11 @@ export async function ensureConnection() {
         return null;
     }
 
+    // Reconnect if URI changes or connection is stale
     if (!connection || mongoose.connection.readyState !== 1 || newUri !== currentUri) {
         try {
             if (connection) {
-                logger.warn('🔄 Detected URI change or stale connection. Closing old MongoDB connection...');
+                logger.warn('🔄 Detected URI change or stale connection. Closing old MongoDB connection…');
                 await mongoose.disconnect();
             }
             connection = await tryConnect(newUri, 3);
@@ -183,10 +184,21 @@ export function getServerModel() {
 }
 
 /* PLAYER FUNCTIONS */
+
+/**
+ * Upserts a player document by Discord ID.
+ * @param {string} playerId
+ * @param {string} discordId
+ * @returns {Promise<Object|null>}
+ */
 export async function upsertPlayer(playerId, discordId) {
     if (!await ensureConnection()) return null;
     return Player.findByIdAndUpdate(playerId, {discordId}, {upsert: true, new: true});
 }
+
+/**
+ * Links a guild and optional roles to a player's profile.
+ */
 export async function linkGuildToPlayer(playerId, guildId, roles = []) {
     if (!await ensureConnection()) return null;
     const player = await Player.findById(playerId);
@@ -196,6 +208,10 @@ export async function linkGuildToPlayer(playerId, guildId, roles = []) {
     else guildLink.roles = [...new Set([...guildLink.roles, ...roles])];
     return player.save();
 }
+
+/**
+ * Adds a player to a server instance.
+ */
 export async function addPlayerToServer(playerId, guildId, serverUuid, serverName, role = 'player') {
     if (!await ensureConnection()) return null;
     const player = await Player.findById(playerId);
@@ -208,30 +224,65 @@ export async function addPlayerToServer(playerId, guildId, serverUuid, serverNam
     guildLink.servers.push({serverUuid, serverName, role, joinedAt: new Date()});
     return player.save();
 }
+
+/**
+ * Logs an item received by a player.
+ */
 export async function logReceivedItem(playerId, item) {
     if (!await ensureConnection()) return null;
-    return Player.findByIdAndUpdate(playerId, {$push: {receivedItems: {...item, timestamp: new Date()}}});
+    return Player.findByIdAndUpdate(
+        playerId,
+        {$push: {receivedItems: {...item, timestamp: new Date()}}}
+    );
 }
 
 /* SERVER FUNCTIONS */
+
+/**
+ * Saves or updates a guild/server configuration.
+ */
 export async function saveGuildConfig(config) {
     if (!await ensureConnection()) return null;
-    return Server.findByIdAndUpdate(config.guildId, {...config, _id: config.guildId}, {upsert: true, new: true});
+    return Server.findByIdAndUpdate(
+        config.guildId,
+        {...config, _id: config.guildId},
+        {upsert: true, new: true}
+    );
 }
+
+/**
+ * Retrieves a guild configuration by guild ID.
+ */
 export async function getGuildConfig(guildId) {
     if (!await ensureConnection()) return null;
     return Server.findById(guildId).lean();
 }
+
+/**
+ * Adds a server instance to a guild configuration.
+ */
 export async function addServerInstance(guildId, serverData) {
     if (!await ensureConnection()) return null;
     return Server.findByIdAndUpdate(guildId, {$push: {servers: serverData}}, {new: true});
 }
+
+/**
+ * Logs an item sent from a server instance.
+ */
 export async function logSentItem(guildId, serverUuid, item) {
     if (!await ensureConnection()) return null;
-    return Server.updateOne({_id: guildId, "servers.uuid": serverUuid}, {$push: {"servers.$.sentItems": item}});
+    return Server.updateOne(
+        {_id: guildId, 'servers.uuid': serverUuid},
+        {$push: {'servers.$.sentItems': item}}
+    );
 }
 
 /* EXPORT */
+
+/**
+ * Aggregate handler exposing DB functions.  Including `getPlayer` here ensures
+ * that safeCall() in databaseHandler.mjs can access it.
+ */
 export const DatabaseHandler = {
     ensureConnection,
     getPlayerModel,
@@ -243,13 +294,16 @@ export const DatabaseHandler = {
     saveGuildConfig,
     getGuildConfig,
     addServerInstance,
-    logSentItem
+    logSentItem,
+    // Adding getPlayer ensures DatabaseHandler exposes it
+    getPlayer
 };
 export default DatabaseHandler;
 
 /**
  * Fetches a player document by ID.
  * @param {string} playerId
+ * @returns {Promise<Object|null>}
  */
 export async function getPlayer(playerId) {
     if (!await ensureConnection()) return null;
