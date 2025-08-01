@@ -15,11 +15,18 @@ import logger from '../../../../../system/log/logHandler.mjs';
 export default {
     data: new SlashCommandSubcommandBuilder()
         .setName('viewdb')
-        .setDescription('👁 View entire MongoDB collections (Players or Servers).')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('👁 View entire MongoDB collections (Players or Servers).'),
 
     async execute(interaction) {
         try {
+            // Manual admin permission check
+            if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({
+                    content: '❌ You do not have permission to use this command.',
+                    ephemeral: true
+                });
+            }
+
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('view_players')

@@ -1,3 +1,11 @@
+/**
+ * @fileoverview
+ * Handles MongoDB connection and models for Eclipse-Bot.
+ * - Retries on DNS/auth failures
+ * - Uses credentials from `.env`
+ * - Provides Player and Server models and related DB helper functions
+ */
+
 import mongoose from 'mongoose';
 import logger from '../../log/logHandler.mjs';
 
@@ -6,7 +14,9 @@ let Player = null;
 let Server = null;
 let currentUri = process.env.MONGO_URI || null;
 
-/* SCHEMAS */
+/**
+ * Player received items schema
+ */
 const receivedItemSchema = new mongoose.Schema({
     itemName: String,
     from: String,
@@ -16,6 +26,9 @@ const receivedItemSchema = new mongoose.Schema({
     timestamp: {type: Date, default: Date.now}
 }, {_id: false});
 
+/**
+ * Server reference schema for linked guilds
+ */
 const serverRefSchema = new mongoose.Schema({
     serverUuid: String,
     serverName: String,
@@ -23,12 +36,18 @@ const serverRefSchema = new mongoose.Schema({
     joinedAt: {type: Date, default: Date.now}
 }, {_id: false});
 
+/**
+ * Linked guilds schema for players
+ */
 const linkedGuildSchema = new mongoose.Schema({
     guildId: String,
     roles: [String],
     servers: [serverRefSchema]
 }, {_id: false});
 
+/**
+ * Player schema
+ */
 const playerSchema = new mongoose.Schema({
     _id: String,
     discordId: {type: String, required: true},
@@ -41,6 +60,9 @@ const playerSchema = new mongoose.Schema({
     }
 }, {timestamps: true});
 
+/**
+ * Sent item schema for servers
+ */
 const sentItemSchema = new mongoose.Schema({
     itemName: String,
     message: String,
@@ -48,6 +70,9 @@ const sentItemSchema = new mongoose.Schema({
     fromTo: [String]
 }, {_id: false});
 
+/**
+ * Server instance schema
+ */
 const serverInstanceSchema = new mongoose.Schema({
     uuid: String,
     serverName: String,
@@ -57,6 +82,9 @@ const serverInstanceSchema = new mongoose.Schema({
     sentItems: [sentItemSchema]
 }, {_id: false});
 
+/**
+ * Guild/server config schema
+ */
 const serverConfigSchema = new mongoose.Schema({
     _id: String,
     guildId: {type: String, required: true},
@@ -77,7 +105,49 @@ const serverConfigSchema = new mongoose.Schema({
     servers: [serverInstanceSchema]
 }, {timestamps: true});
 
-/* CONNECTION HANDLER */
+/**
+ * Attempts to connect to MongoDB with retry support
+ * @param {string} uri Mongo connection URI
+ * @param {number} retries Number of retries
+ * @returns {Promise<mongoose.Connection>}
+ */
+async function tryConnect(uri, retries = 3) {
+    const mongoUser = process.env.MONGO_USER;
+    const mongoPass = process.env.MONGO_PASS;
+    const dbName = process.env.MONGO_DB_NAME || 'ecbot';
+
+    for (let i = 1; i <= retries; i++) {
+        try {
+            logger.info(`🌐 [${i}/${retries}] Connecting to MongoDB at: ${uri}`);
+            return await mongoose.connect(uri, {
+                dbName,
+                user: mongoUser,
+                pass: mongoPass,
+                serverSelectionTimeoutMS: 5000,
+                connectTimeoutMS: 5000
+            });
+        } catch (err) {
+            if (err.message.includes('ENOTFOUND')) {
+                logger.error(`🌐 DNS lookup failed for MongoDB host (attempt ${i}).`);
+            } else if (err.code === 18 || err.message.includes('Authentication')) {
+                logger.error(`🔑 Authentication failed (attempt ${i}). Check MONGO_USER/PASS.`);
+            } else {
+                logger.error(`🔥 MongoDB connection error (attempt ${i}): ${err.message}`);
+            }
+            if (i < retries) {
+                await new Promise(res => setTimeout(res, 3000));
+                continue;
+            }
+            throw err;
+        }
+    }
+}
+
+/**
+ * Ensures a working connection to MongoDB.
+ * Creates models on first successful connection.
+ * @returns {Promise<mongoose.Connection|null>}
+ */
 export async function ensureConnection() {
     const newUri = process.env.MONGO_URI;
     if (!newUri) {
@@ -91,18 +161,13 @@ export async function ensureConnection() {
                 logger.warn('🔄 Detected URI change or stale connection. Closing old MongoDB connection...');
                 await mongoose.disconnect();
             }
-            logger.info(`🌐 Connecting to MongoDB at: ${newUri}`);
-            connection = await mongoose.connect(newUri, {
-                dbName: process.env.MONGO_DB_NAME || 'ecbot',
-                user: process.env.MONGO_USER || 'ecbot',
-                pass: process.env.MONGO_PASS || ''
-            });
+            connection = await tryConnect(newUri, 3);
             currentUri = newUri;
-            logger.info(`✅ Connected to MongoDB database: ${process.env.MONGO_DB_NAME || 'ecbot'}`);
+            logger.success(`✅ Connected to MongoDB database: ${process.env.MONGO_DB_NAME || 'ecbot'}`);
             if (!Player) Player = mongoose.models.players || mongoose.model('players', playerSchema);
             if (!Server) Server = mongoose.models.servers || mongoose.model('servers', serverConfigSchema);
         } catch (err) {
-            logger.error('🔥 MongoDB connection error:', err);
+            logger.error('🔥 MongoDB connection failed after retries:', err);
             connection = null;
         }
     }
@@ -113,7 +178,6 @@ export async function ensureConnection() {
 export function getPlayerModel() {
     return Player;
 }
-
 export function getServerModel() {
     return Server;
 }
@@ -183,7 +247,11 @@ export const DatabaseHandler = {
 };
 export default DatabaseHandler;
 
-async function getPlayer(playerId) {
+/**
+ * Fetches a player document by ID.
+ * @param {string} playerId
+ */
+export async function getPlayer(playerId) {
     if (!await ensureConnection()) return null;
     return Player.findById(playerId).lean();
 }

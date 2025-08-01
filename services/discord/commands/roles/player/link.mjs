@@ -1,6 +1,19 @@
 import {SlashCommandSubcommandBuilder} from 'discord.js';
 import {upsertPlayer} from '../../../users/usersHandler.mjs';
 
+// Safe reply helper to prevent "Unknown interaction" errors
+async function safeReply(interaction, payload) {
+    try {
+        if (interaction.replied || interaction.deferred) {
+            return await interaction.followUp(payload);
+        } else {
+            return await interaction.reply(payload);
+        }
+    } catch (err) {
+        console.error(`❌ Failed to send reply in /ec link: ${err.message}`);
+    }
+}
+
 export default {
     data: new SlashCommandSubcommandBuilder()
         .setName('link')
@@ -14,16 +27,16 @@ export default {
             const player = await upsertPlayer(discordId, discordId);
 
             if (!player) {
-                return interaction.reply({
+                return safeReply(interaction, {
                     content: '❌ Failed to link your account. Please try again later.',
                     ephemeral: true,
                 });
             }
 
-            await interaction.reply(`✅ Your account has been successfully linked!`);
+            await safeReply(interaction, {content: '✅ Your account has been successfully linked!'});
         } catch (err) {
             console.error('🔥 /ec link command error:', err);
-            await interaction.reply({
+            await safeReply(interaction, {
                 content: '❌ An unexpected error occurred while linking your account.',
                 ephemeral: true,
             });

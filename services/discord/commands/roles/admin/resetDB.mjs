@@ -10,11 +10,18 @@ import logger from '../../../../../system/log/logHandler.mjs';
 export default {
     data: new SlashCommandSubcommandBuilder()
         .setName('resetdb')
-        .setDescription('⚠️ Deletes all Eclipse-Bot data and restarts the bot.')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('⚠️ Deletes all Eclipse-Bot data and restarts the bot.'),
 
     async execute(interaction) {
         try {
+            // Manual admin permission check
+            if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({
+                    content: '❌ You do not have permission to use this command.',
+                    ephemeral: true
+                });
+            }
+
             await interaction.reply({
                 content: '⚠️ Are you sure you want to wipe **ALL data**? This will restart the bot in 2 seconds.',
                 ephemeral: true

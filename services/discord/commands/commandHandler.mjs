@@ -2,7 +2,7 @@
  * 📁 services/discord/commands/commandHandler.mjs
  * ------------------------------------------------
  * Handles dynamic registration of:
- *   - Slash commands under a single parent `/ec` (e.g., `/ec ping`, `/ec link`, etc.)
+ *   - Slash commands under a single parent `/ec`
  *   - Text commands (!commands or plain words)
  *
  * ✅ Recursively loads all command modules

@@ -5,6 +5,7 @@
 import 'dotenv/config.js';
 import logger from './system/log/logHandler.mjs';
 import initDiscord from './services/discord/initDiscord.mjs';
+import Docker from 'dockerode';
 
 // ──────────────── ENV LOADING ────────────────
 
@@ -22,10 +23,43 @@ if (missingVars.length) {
     process.exit(1);
 }
 
+// ──────────────── NETWORK CHECK (if in Docker) ────────────────
+
+async function checkBotNetworkMembership() {
+    const docker = new Docker();
+    const networkName = 'ecbot-net';
+    try {
+        const containerId = fs.readFileSync('/proc/self/cgroup', 'utf8')
+            .split('\n')
+            .find(line => line.includes('docker'))
+            ?.split('/')
+            ?.pop();
+
+        if (!containerId) {
+            logger.info('ℹ️ Not running inside Docker — skipping network check.');
+            return;
+        }
+
+        const network = docker.getNetwork(networkName);
+        const netInfo = await network.inspect();
+        const found = Object.values(netInfo.Containers).some(c => c.Name.includes('eclipse-bot'));
+
+        if (!found) {
+            logger.warn(`⚠️ Docker container is NOT connected to '${networkName}'. This may break Mongo setup.`);
+        } else {
+            logger.info(`🌐 Container is connected to '${networkName}'`);
+        }
+    } catch (err) {
+        logger.warn(`⚠️ Failed to verify Docker network membership: ${err.message}`);
+    }
+}
+
 // ──────────────── MAIN STARTUP ────────────────
 
 async function main() {
     logger.info('🚀 Starting Eclipse-Bot...');
+
+    await checkBotNetworkMembership();
 
     try {
         const client = await initDiscord(env); // ✅ returns client
@@ -34,7 +68,6 @@ async function main() {
             throw new Error('Discord client was not returned by initDiscord');
         }
 
-        // ✅ Wait for bot to be fully ready
         client.once('ready', () => {
             logger.success(`🤖 Bot is ready and logged in as ${client.user.tag}`);
         });
