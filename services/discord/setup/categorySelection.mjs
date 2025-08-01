@@ -41,7 +41,7 @@ export async function handleCategorySelection(interaction, client, session, skip
             embeds: [
                 new EmbedBuilder()
                     .setTitle('Step 2️⃣ - Category')
-                    .setDescription('Choose a text category or create a new one.')
+                    .setDescription('Choose a admin category or create a new one. Channels already in this category will be removed.')
                     .setColor(0x5865F2)
             ],
             components: [

@@ -13,30 +13,26 @@ import {
     pickExistingRoles
 } from './setup/rolesSetup.mjs';
 import {confirmConfig, finalizeConfig} from './setup/finalizeConfig.mjs';
-import {connectDatabase} from '../../system/database/databaseHandler.mjs';
 
-import {sendWelcomeMessage} from './setup/welcome.mjs';
-import {getGuildConfig} from './users/usersHandler.mjs';
-
-// Load environment variables
 dotenv.config({override: true});
 
-// In-memory map that tracks active setup sessions
+/**
+ * In-memory map of setup sessions per user.
+ * @type {Map<string, { step: number|string, choices: Object, dm: import('discord.js').DMChannel }>}
+ */
 export const setupSessions = new Map();
 
 /**
- * Starts the setup wizard by DMing the super user.
+ * Triggers the first-time setup wizard for the designated SUPER_USER_ID.
+ * Sends a DM with a "Start Setup" button.
+ * @param {import('discord.js').Client} client
  */
 export async function runFirstTimeSetup(client) {
     const superUserId = process.env.SUPER_USER_ID;
-    if (!superUserId) {
-        return logger.error('❌ SUPER_USER_ID not set');
-    }
+    if (!superUserId) return logger.error('❌ SUPER_USER_ID not set');
 
     const user = await client.users.fetch(superUserId).catch(() => null);
-    if (!user) {
-        return logger.error('❌ SuperUser not found');
-    }
+    if (!user) return logger.error('❌ SuperUser not found');
 
     const dm = await user.createDM();
     setupSessions.set(user.id, {step: 1, choices: {}, dm});
@@ -51,19 +47,32 @@ export async function runFirstTimeSetup(client) {
         .setLabel('🚀 Start Setup')
         .setStyle(ButtonStyle.Primary);
 
-    await dm.send({
-        embeds: [embed],
-        components: [new ActionRowBuilder().addComponents(button)]
-    });
+    await dm.send({embeds: [embed], components: [new ActionRowBuilder().addComponents(button)]});
 }
 
 /**
- * Handles button and menu interactions during the setup flow.
+ * Handles button interactions during the setup wizard flow.
+ * @param {import('discord.js').ButtonInteraction} interaction
+ * @param {import('discord.js').Client} client
  */
 export async function handleSetupInteraction(interaction, client) {
     const session = setupSessions.get(interaction.user.id);
+
     if (!session) {
-        logger.warn(`⚠️ No setup session found for user ${interaction.user.id}`);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+                content: '⚠️ This setup session is no longer active or has expired.',
+                ephemeral: true
+            }).catch(() => {
+            });
+        }
+
+        logger.warn(`⚠️ Ignored expired or missing setup session for user ${interaction.user.id}`);
+
+        if (interaction.message && interaction.message.deletable) {
+            await interaction.message.delete().catch(() => {
+            });
+        }
         return;
     }
 
@@ -78,18 +87,14 @@ export async function handleSetupInteraction(interaction, client) {
             case 'setup_select_category':
             case 'setup_create_category': {
                 await handleCategoryChoice(interaction, client, session);
-
                 if (!interaction.deferred && !interaction.replied) {
-                    // Prevent double replies on deferred interactions
                     await interaction.deferUpdate();
                 }
-
                 return askDatabaseSetup(interaction, session);
             }
 
             case 'setup_db_docker': {
                 await handleDockerMongo(interaction, session);
-                if (connectDatabase) await connectDatabase();
                 return askRoles(interaction, session);
             }
 
@@ -104,34 +109,22 @@ export async function handleSetupInteraction(interaction, client) {
 
             case 'setup_roles_select_player': {
                 await handlePlayerRoleSelected(interaction, session);
-                return confirmConfig(interaction, session);
+                return confirmConfig(interaction, session, client);
             }
 
             case 'setup_roles_autocreate': {
                 await autoCreateRoles(interaction, session, client);
-                return confirmConfig(interaction, session);
+                return confirmConfig(interaction, session, client);
             }
 
             case 'setup_confirm_config': {
-                // Finalise the configuration in the DB
                 await finalizeConfig(interaction, session, client);
 
-                // Post a welcome message to the waiting room using the saved config
-                try {
-                    const config = await getGuildConfig(session.choices.guildId);
-                    if (config) {
-                        await sendWelcomeMessage(client, config);
-                    } else {
-                        logger.warn(
-                            `⚠️ Could not fetch config for guild ${session.choices.guildId} after setup.`
-                        );
-                    }
-                } catch (err) {
-                    logger.error(`❌ Failed to send welcome message: ${err.message}`);
-                }
-
-                // Clean up the in-memory setup session
                 setupSessions.delete(interaction.user.id);
+                if (interaction.message && interaction.message.deletable) {
+                    await interaction.message.delete().catch(() => {
+                    });
+                }
                 return;
             }
 
@@ -141,19 +134,15 @@ export async function handleSetupInteraction(interaction, client) {
     } catch (err) {
         logger.error(`❌ Setup step failed: ${err.message}`);
         if (!interaction.deferred && !interaction.replied) {
-            await interaction
-                .reply({
-                    content: '❌ Setup error, please retry.',
-                    flags: 64
-                })
-                .catch(() => {
-                });
+            await interaction.reply({content: '❌ Setup error, please retry.', flags: 64}).catch(() => {
+            });
         }
     }
 }
 
 /**
- * Handles plain text messages for manual Mongo URI entry.
+ * Handles Mongo URI input via direct message.
+ * @param {import('discord.js').Message} message
  */
 export async function handleSetupMessage(message) {
     const session = setupSessions.get(message.author.id);
