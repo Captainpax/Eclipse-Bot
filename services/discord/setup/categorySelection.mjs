@@ -1,4 +1,5 @@
 import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder} from 'discord.js';
+// In the flattened environment the logger resides at the project root.
 import logger from '../../../system/log/logHandler.mjs';
 
 /**
@@ -69,20 +70,75 @@ export async function handleCategoryChoice(interaction, client, session) {
         await interaction.deferUpdate();
         const guild = await client.guilds.fetch(session.choices.guildId);
 
+        // Determine or create the category for the admin panel
+        let category;
         if (interaction.customId === 'setup_create_category') {
-            const cat = await guild.channels.create({
+            category = await guild.channels.create({
                 name: 'Eclipse-Bot',
                 type: 4
             });
-            session.choices.categoryId = cat.id;
+            session.choices.categoryId = category.id;
         } else {
             session.choices.categoryId = interaction.values[0];
+            // Attempt to fetch the category from cache or API
+            category = guild.channels.cache.get(session.choices.categoryId);
+            if (!category) {
+                category = await guild.channels.fetch(session.choices.categoryId);
+            }
         }
+
+        // If the chosen category already contains channels, warn the user and
+        // remove them to ensure a clean slate for the admin panel.
+        const existingChildren = guild.channels.cache.filter(
+            (ch) => ch.parentId === session.choices.categoryId
+        );
+        if (existingChildren.size > 0) {
+            await interaction.followUp({
+                content: `⚠️ The selected category already contains ${existingChildren.size} channel(s). They will be removed for a fresh admin panel setup.`,
+                flags: 64
+            });
+            for (const child of existingChildren.values()) {
+                try {
+                    await child.delete();
+                } catch (err) {
+                    logger.error(`❌ Failed to delete channel ${child.id}: ${err.message}`);
+                }
+            }
+        }
+
+        // Always create a log channel inside this category for diagnostics
+        const logsCh = await guild.channels.create({
+            name: 'ap-logs',
+            type: 0,
+            parent: session.choices.categoryId
+        });
+        session.choices.logsId = logsCh.id;
+
+        // Wire up the logger to forward messages to the log channel
+        const discordLogger = {
+            async sendToLogChannel(msg) {
+                try {
+                    await logsCh.send({content: msg});
+                } catch (err) {
+                    logger.error(`❌ Failed to send log message: ${err.message}`);
+                }
+            }
+        };
+        const level =
+            process.env.DEBUG?.toLowerCase() === 'true' || process.env.DEBUG === '1'
+                ? 'debug'
+                : 'high';
+        logger.setDiscordLogger(discordLogger, level);
+
+        await interaction.followUp({
+            content: `✅ Log channel created: <#${logsCh.id}>`,
+            flags: 64
+        });
     } catch (err) {
-        logger.error(`❌ Failed to set category: ${err.message}`);
+        logger.error(`❌ Failed to set up category: ${err.message}`);
         return interaction.followUp({
             content: '❌ Could not set or create category. Check permissions.',
-            ephemeral: true
+            flags: 64
         });
     }
     // Flow continues in next setup stage

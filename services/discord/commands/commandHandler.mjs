@@ -2,18 +2,18 @@
  * 📁 services/discord/commands/commandHandler.mjs
  * ------------------------------------------------
  * Handles dynamic registration of:
- *   - Slash commands (/commands)
+ *   - Slash commands under a single parent `/ec` (e.g., `/ec ping`, `/ec link`, etc.)
  *   - Text commands (!commands or plain words)
  *
  * ✅ Recursively loads all command modules
- * ✅ Registers slash commands via Discord REST API
+ * ✅ Registers a grouped `/ec` slash command with subcommands
  * ✅ Supports modular text command files
  * ✅ Logs success/errors with debug info
  */
 
 import path from 'path';
 import fs from 'fs';
-import {REST} from 'discord.js';
+import {REST, SlashCommandBuilder} from 'discord.js';
 import {Routes} from 'discord-api-types/v10';
 import logger from '../../../system/log/logHandler.mjs';
 
@@ -30,8 +30,12 @@ export class registerCommandHandlers {
         this.clientId = clientId;
         this.guildId = guildId;
 
-        this.commands = new Map();      // Slash commands
+        this.commands = new Map();      // Slash subcommands
         this.textCommands = new Map();  // Text commands
+
+        this.parentCommand = new SlashCommandBuilder()
+            .setName('ec')
+            .setDescription('Eclipse-Bot commands');
     }
 
     /**
@@ -56,13 +60,17 @@ export class registerCommandHandlers {
             if (entry.name.startsWith('_') || entry.name === 'index.mjs') continue;
 
             try {
-                // Bust Node's import cache to support live reload
                 const modulePath = `file://${fullPath}?v=${Date.now()}`;
-                const cmdModule = await import(modulePath);
+                const imported = await import(modulePath);
+                const cmdModule = imported?.default ?? imported;
 
                 if (type === 'slash' && cmdModule?.data && cmdModule?.execute) {
+                    this.parentCommand.addSubcommand(sub =>
+                        sub.setName(cmdModule.data.name)
+                            .setDescription(cmdModule.data.description || `Run ${cmdModule.data.name}`)
+                    );
                     this.commands.set(cmdModule.data.name, cmdModule);
-                    logger.debug(`✅ [Slash] Loaded command: ${cmdModule.data.name}`);
+                    logger.debug(`✅ [Slash] Loaded subcommand: ${cmdModule.data.name}`);
                 } else if (type === 'text' && cmdModule?.name && cmdModule?.execute) {
                     this.textCommands.set(cmdModule.name.toLowerCase(), cmdModule);
                     logger.debug(`💬 [Text] Loaded command: ${cmdModule.name}`);
@@ -76,7 +84,7 @@ export class registerCommandHandlers {
     }
 
     /**
-     * Registers all slash and text commands with Discord API.
+     * Registers all slash (grouped under /ec) and text commands with Discord API.
      */
     async register() {
         const slashDir = path.resolve('./services/discord/commands');
@@ -86,27 +94,24 @@ export class registerCommandHandlers {
         await this.loadCommandsFromDir(slashDir, 'slash');
         await this.loadCommandsFromDir(textDir, 'text');
 
-        // Attach loaded commands to client
         this.client.commands = this.commands;
         this.client.textCommands = this.textCommands;
 
-        // Build array for API
-        const commandList = Array.from(this.commands.values()).map(cmd => cmd.data.toJSON());
-        logger.debug(`📦 Slash commands loaded: ${Array.from(this.commands.keys()).join(', ') || 'None'}`);
+        const commandList = [this.parentCommand.toJSON()];
+        logger.debug(`📦 Slash command group /ec registered with: ${Array.from(this.commands.keys()).join(', ')}`);
         logger.debug(`📦 Text commands loaded: ${Array.from(this.textCommands.keys()).join(', ') || 'None'}`);
 
-        // Prepare REST
         const rest = new REST({version: '10'}).setToken(this.token);
         const route = this.guildId
             ? Routes.applicationGuildCommands(this.clientId, this.guildId)
             : Routes.applicationCommands(this.clientId);
 
         try {
-            logger.info(`📡 Registering ${commandList.length} slash command(s) (${this.guildId ? 'Guild' : 'Global'})...`);
+            logger.info(`📡 Registering /ec with ${this.commands.size} subcommand(s) (${this.guildId ? 'Guild' : 'Global'})...`);
             await rest.put(route, {body: commandList});
-            logger.success(`✅ Slash commands registered successfully (${this.guildId ? 'Guild' : 'Global'})`);
+            logger.success(`✅ Slash command /ec registered successfully.`);
         } catch (error) {
-            logger.error(`❌ Failed to register slash commands: ${error.message}`);
+            logger.error(`❌ Failed to register grouped slash command: ${error.message}`);
         }
 
         logger.info(`💬 Loaded ${this.textCommands.size} text command(s).`);

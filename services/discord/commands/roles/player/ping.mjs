@@ -1,7 +1,7 @@
-import {SlashCommandBuilder} from 'discord.js';
+import {SlashCommandSubcommandBuilder} from 'discord.js';
 
 export default {
-    data: new SlashCommandBuilder()
+    data: new SlashCommandSubcommandBuilder()
         .setName('ping')
         .setDescription('Check if Eclipse-Bot is online and responding.'),
 
@@ -12,7 +12,7 @@ export default {
 
             await interaction.editReply(`🏓 Pong! Latency: **${latency}ms**`);
         } catch (err) {
-            console.error('🔥 /ping command error:', err);
+            console.error('🔥 /ec ping command error:', err);
             await interaction.reply({
                 content: '❌ Ping failed. Bot might be experiencing issues.',
                 ephemeral: true,

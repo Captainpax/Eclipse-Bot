@@ -40,8 +40,30 @@ export async function finalizeConfig(interaction, session, client) {
     });
 
     const guild = await client.guilds.fetch(session.choices.guildId);
-    const consoleCh = await guild.channels.create({name: 'ap-console', type: 0, parent: session.choices.categoryId});
-    const logsCh = await guild.channels.create({name: 'ap-logs', type: 0, parent: session.choices.categoryId});
+    // Always create a fresh console channel and waiting room channel. For
+    // the logs channel, reuse the one created during category selection if
+    // available. If it does not exist or has been deleted, create a new
+    // one to ensure logs can be sent.
+    const consoleCh = await guild.channels.create({
+        name: 'ap-console',
+        type: 0,
+        parent: session.choices.categoryId
+    });
+    let logsCh;
+    if (session.choices.logsId) {
+        try {
+            logsCh = await guild.channels.fetch(session.choices.logsId);
+        } catch (_) {
+            logsCh = null;
+        }
+    }
+    if (!logsCh) {
+        logsCh = await guild.channels.create({
+            name: 'ap-logs',
+            type: 0,
+            parent: session.choices.categoryId
+        });
+    }
     const waitingCh = await guild.channels.create({
         name: 'ap-waiting-room',
         type: 0,

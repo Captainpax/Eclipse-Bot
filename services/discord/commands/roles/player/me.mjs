@@ -1,9 +1,9 @@
-import {SlashCommandBuilder} from 'discord.js';
+import {SlashCommandSubcommandBuilder} from 'discord.js';
 import {getPlayer} from '../../../users/usersHandler.mjs';
 import {addToSignupQueue} from '../../../guilds/channelHandler.mjs';
 
 export default {
-    data: new SlashCommandBuilder()
+    data: new SlashCommandSubcommandBuilder()
         .setName('me')
         .setDescription('Join the signup queue for the next Archipelago game.'),
 
@@ -14,7 +14,7 @@ export default {
 
             if (!isLinked) {
                 return interaction.reply({
-                    content: '❌ You must use `/link` first to join the queue.',
+                    content: '❌ You must use `/ec link` first to join the queue.',
                     ephemeral: true,
                 });
             }
@@ -31,7 +31,7 @@ export default {
 
             await interaction.reply('✅ You’ve been added to the signup queue!');
         } catch (err) {
-            console.error('🔥 /me command error:', err);
+            console.error('🔥 /ec me command error:', err);
             await interaction.reply({
                 content: '❌ Unable to add you to the signup queue at this time.',
                 ephemeral: true,

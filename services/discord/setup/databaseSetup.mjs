@@ -3,63 +3,36 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import Docker from 'dockerode';
+import crypto from 'crypto';
 import logger from '../../../system/log/logHandler.mjs';
 
 dotenv.config({override: true});
 
-/**
- * Utility function to safely reply or follow up to an interaction
- * to avoid InteractionAlreadyReplied errors.
- */
 async function safeReply(interaction, payload) {
     try {
-        if (interaction.replied || interaction.deferred) {
-            return await interaction.followUp(payload);
-        } else {
-            return await interaction.reply(payload);
-        }
+        if (interaction.replied || interaction.deferred) return await interaction.followUp(payload);
+        else return await interaction.reply(payload);
     } catch (err) {
         logger.error(`❌ Failed to send interaction reply: ${err.message}`);
     }
 }
 
-/**
- * Prompt user to choose how MongoDB will be configured.
- * @param {import('discord.js').Interaction} interaction
- * @param {Object} session
- */
 export async function askDatabaseSetup(interaction, session) {
     const embed = new EmbedBuilder()
         .setTitle('📦 Database Setup')
-        .setDescription(
-            'Choose how you want to configure MongoDB.\n\n' +
-            '🔧 **Docker**: Let me deploy Mongo automatically.\n' +
-            '📝 **Manual**: You enter your own Mongo URI.'
-        )
+        .setDescription('Choose how you want to configure MongoDB.\n\n🔧 **Docker**: Let me deploy Mongo automatically.\n📝 **Manual**: You enter your own Mongo URI.')
         .setColor(0x3498db);
 
     const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('setup_db_docker')
-            .setLabel('Use Docker')
-            .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-            .setCustomId('setup_db_manual')
-            .setLabel('Enter URI')
-            .setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('setup_db_docker').setLabel('Use Docker').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('setup_db_manual').setLabel('Enter URI').setStyle(ButtonStyle.Secondary)
     );
 
     await safeReply(interaction, {embeds: [embed], components: [row], ephemeral: true});
 }
 
-/**
- * Prompt user to enter a Mongo URI via DM message.
- * @param {import('discord.js').Interaction} interaction
- * @param {Object} session
- */
 export async function askMongoUri(interaction, session) {
     session.step = 'await_mongo_uri';
-
     const embed = new EmbedBuilder()
         .setTitle('📝 Manual MongoDB Configuration')
         .setDescription('Please paste your MongoDB connection URI below.\nExample: `mongodb://user:pass@host:port/dbname`')
@@ -73,42 +46,62 @@ export async function askMongoUri(interaction, session) {
     }
 }
 
-/**
- * Handles the Docker MongoDB setup and injects the result into the env.
- * @param {import('discord.js').Interaction} interaction
- * @param {Object} session
- */
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function waitForMongoHealthy(container, retries = 3) {
+    return new Promise(async (resolve, reject) => {
+        for (let i = 0; i < retries; i++) {
+            try {
+                const inspect = await container.inspect();
+                const state = inspect.State?.Health?.Status || inspect.State?.Status;
+                logger.debug(`⏳ Mongo container state: ${state}`);
+                if (state === 'healthy' || state === 'running') return resolve(true);
+            } catch (err) {
+                logger.warn(`Retry ${i + 1} failed: ${err.message}`);
+            }
+            await delay(3000);
+        }
+        reject(new Error('Mongo container did not become healthy in time.'));
+    });
+}
+
 export async function handleDockerMongo(interaction, session) {
     const docker = new Docker();
+    const networkName = 'ecbot-net';
     const containerName = 'ecbot-mongo';
     const mongoPort = 27017;
-    const mongoUser = 'eclipse';
-    const mongoPass = 'eclipse123';
+
+    const mongoUser = `user_${crypto.randomBytes(3).toString('hex')}`;
+    const mongoPass = crypto.randomBytes(12).toString('hex');
     const mongoDb = 'eclipse-bot';
 
-    // Step 1: Pull Mongo image
+    try {
+        const networks = await docker.listNetworks();
+        if (!networks.find(n => n.Name === networkName)) {
+            await docker.createNetwork({Name: networkName, Driver: 'bridge'});
+            logger.info(`🌐 Created Docker network: ${networkName}`);
+        }
+    } catch (err) {
+        logger.error(`❌ Failed to create/check network: ${err.message}`);
+    }
+
     await safeReply(interaction, {content: '📥 Pulling MongoDB image...', ephemeral: true});
 
     try {
         await new Promise((resolve, reject) => {
             docker.pull('mongo:6', (err, stream) => {
                 if (err) return reject(err);
-                docker.modem.followProgress(stream, (err) => {
-                    if (err) return reject(err);
-                    logger.info('✅ Mongo image pulled.');
-                    resolve();
-                });
+                docker.modem.followProgress(stream, err => (err ? reject(err) : resolve()));
             });
         });
+        logger.info('✅ Mongo image pulled.');
     } catch (err) {
         logger.error(`❌ Failed to pull image: ${err.message}`);
-        return safeReply(interaction, {
-            content: '❌ Failed to pull Mongo image. Check Docker permissions.',
-            ephemeral: true
-        });
+        return safeReply(interaction, {content: '❌ Failed to pull Mongo image.', ephemeral: true});
     }
 
-    // Step 2: Remove old container if exists
     try {
         const old = docker.getContainer(containerName);
         await old.remove({force: true});
@@ -116,7 +109,6 @@ export async function handleDockerMongo(interaction, session) {
     } catch (_) {
     }
 
-    // Step 3: Start Mongo container
     const container = await docker.createContainer({
         name: containerName,
         Image: 'mongo:6',
@@ -125,28 +117,43 @@ export async function handleDockerMongo(interaction, session) {
             `MONGO_INITDB_ROOT_PASSWORD=${mongoPass}`
         ],
         HostConfig: {
-            PortBindings: {"27017/tcp": [{HostPort: `${mongoPort}`}]},
             RestartPolicy: {Name: 'always'},
-            NetworkMode: 'bridge'
+            NetworkMode: networkName
+        },
+        NetworkingConfig: {
+            EndpointsConfig: {
+                [networkName]: {Aliases: [containerName]}
+            }
+        },
+        Healthcheck: {
+            Test: ['CMD-SHELL', 'echo "db.stats().ok" | mongosh localhost/test --quiet'],
+            Interval: 1000000000,
+            Timeout: 3000000000,
+            Retries: 5
         }
     });
     await container.start();
     logger.info('🚀 Mongo container started.');
 
-    // Step 4: Inject .env
+    await waitForMongoHealthy(container).catch(err => {
+        logger.error(`❌ Mongo did not become healthy: ${err.message}`);
+    });
+
+    const newUri = `mongodb://${mongoUser}:${mongoPass}@${containerName}:${mongoPort}/${mongoDb}?authSource=admin`;
     const envPath = path.resolve(process.cwd(), '.env');
     let envContents = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-    const newUri = `mongodb://${mongoUser}:${mongoPass}@localhost:${mongoPort}/${mongoDb}?authSource=admin`;
-
-    if (!envContents.includes('MONGO_URI=')) {
-        envContents += `\nMONGO_URI=${newUri}`;
-    } else {
-        envContents = envContents.replace(/MONGO_URI=.*/g, `MONGO_URI=${newUri}`);
-    }
+    envContents = envContents.replace(/MONGO_URI=.*/g, '').trim();
+    envContents += `\nMONGO_URI=${newUri}\nMONGO_USER=${mongoUser}\nMONGO_PASS=${mongoPass}\n`;
     fs.writeFileSync(envPath, envContents);
+
     process.env.MONGO_URI = newUri;
     session.choices.mongoUri = newUri;
 
-    logger.info('✅ Mongo URI written to .env');
-    await safeReply(interaction, {content: '✅ Mongo container deployed and connected.', ephemeral: true});
+    logger.info('✅ Mongo URI and credentials written to .env');
+
+    await safeReply(interaction, {content: '✅ Mongo container deployed and connecting...', ephemeral: true});
+
+    // Continue to next setup phase (DM wizard or otherwise)
+    session.step = 'await_server_setup';
+    session.dbReady = true;
 }

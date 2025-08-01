@@ -1,14 +1,14 @@
-import {PermissionFlagsBits, SlashCommandBuilder} from 'discord.js';
+import {PermissionFlagsBits, SlashCommandSubcommandBuilder} from 'discord.js';
 import {DatabaseHandler} from '../../../../../system/database/mongo/mongoHandler.mjs';
 import logger from '../../../../../system/log/logHandler.mjs';
 
 /**
- * /resetdb
- * Deletes all data in MongoDB (players, guild configs, servers).
- * Only available to admins or server owner.
+ * /ec resetdb
+ * Deletes all MongoDB collections (players, guild configs, servers).
+ * Restricted to admins only.
  */
 export default {
-    data: new SlashCommandBuilder()
+    data: new SlashCommandSubcommandBuilder()
         .setName('resetdb')
         .setDescription('⚠️ Deletes all Eclipse-Bot data and restarts the bot.')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -50,7 +50,7 @@ export default {
             setTimeout(() => process.exit(1), 2000);
 
         } catch (err) {
-            logger.error(`💥 Error in /resetdb command: ${err.message}`);
+            logger.error(`💥 Error in /ec resetdb command: ${err.message}`);
             if (!interaction.replied) {
                 await interaction.reply({
                     content: '❌ Failed to reset the database.',

@@ -1,8 +1,8 @@
-import {SlashCommandBuilder} from 'discord.js';
+import {SlashCommandSubcommandBuilder} from 'discord.js';
 import {upsertPlayer} from '../../../users/usersHandler.mjs';
 
 export default {
-    data: new SlashCommandBuilder()
+    data: new SlashCommandSubcommandBuilder()
         .setName('link')
         .setDescription('Link your Discord account to Eclipse-Bot.'),
 
@@ -22,7 +22,7 @@ export default {
 
             await interaction.reply(`✅ Your account has been successfully linked!`);
         } catch (err) {
-            console.error('🔥 /link command error:', err);
+            console.error('🔥 /ec link command error:', err);
             await interaction.reply({
                 content: '❌ An unexpected error occurred while linking your account.',
                 ephemeral: true,

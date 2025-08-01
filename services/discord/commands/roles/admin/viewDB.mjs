@@ -1,21 +1,25 @@
-import {ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, SlashCommandBuilder} from 'discord.js';
+import {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    PermissionFlagsBits,
+    SlashCommandSubcommandBuilder
+} from 'discord.js';
 import {DatabaseHandler} from '../../../../../system/database/mongo/mongoHandler.mjs';
 import logger from '../../../../../system/log/logHandler.mjs';
 
 /**
- * /viewdb
+ * /ec viewdb
  * Allows administrators to view full MongoDB collections (Players or Servers).
- * Provides two buttons to choose which collection to inspect.
  */
 export default {
-    data: new SlashCommandBuilder()
+    data: new SlashCommandSubcommandBuilder()
         .setName('viewdb')
         .setDescription('👁 View entire MongoDB collections (Players or Servers).')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
         try {
-            // --- Build selection buttons ---
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('view_players')
@@ -33,7 +37,6 @@ export default {
                 ephemeral: true
             });
 
-            // --- Collector for button clicks ---
             const filter = i => i.user.id === interaction.user.id;
             const collector = interaction.channel.createMessageComponentCollector({filter, time: 20000});
 
@@ -64,10 +67,8 @@ export default {
                         });
                     }
 
-                    // --- Format data to JSON string ---
                     const formatted = '```json\n' + JSON.stringify(data, null, 2) + '\n```';
 
-                    // Handle Discord 2000-character limit
                     if (formatted.length <= 2000) {
                         await i.reply({content: formatted, ephemeral: true});
                     } else {
@@ -88,11 +89,11 @@ export default {
                         content: '⌛ Interaction timed out.',
                         components: []
                     });
-                } catch (_) { /* ignore */
+                } catch (_) {
                 }
             });
         } catch (err) {
-            logger.error(`🔥 Error in /viewdb command: ${err.message}`);
+            logger.error(`🔥 Error in /ec viewdb command: ${err.message}`);
             if (!interaction.replied) {
                 await interaction.reply({content: '❌ Command failed to execute.', ephemeral: true}).catch(() => {
                 });

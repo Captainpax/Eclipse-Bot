@@ -1,8 +1,8 @@
-import {SlashCommandBuilder} from 'discord.js';
+import {SlashCommandSubcommandBuilder} from 'discord.js';
 import {getSignupQueue} from '../../../guilds/channelHandler.mjs';
 
 export default {
-    data: new SlashCommandBuilder()
+    data: new SlashCommandSubcommandBuilder()
         .setName('list')
         .setDescription('Show the current signup queue.'),
 
@@ -19,9 +19,12 @@ export default {
             }
 
             const list = queue.map((id, i) => `\n> **${i + 1}.** <@${id}>`).join('');
-            await interaction.reply({content: `📋 **Signup Queue:**${list}`, allowedMentions: {parse: []}});
+            await interaction.reply({
+                content: `📋 **Signup Queue:**${list}`,
+                allowedMentions: {parse: []},
+            });
         } catch (err) {
-            console.error('🔥 /list command error:', err);
+            console.error('🔥 /ec list command error:', err);
             await interaction.reply({
                 content: '❌ Could not fetch the signup queue.',
                 ephemeral: true,
