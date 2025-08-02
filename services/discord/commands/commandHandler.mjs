@@ -107,7 +107,7 @@ export class registerCommandHandlers {
 
         try {
             logger.info(
-                `📡 Registering 1 slash command with ${this.slashCommands.length} subcommand(s) (${this.guildId ? 'Guild' : 'Global'})...`,
+                `📡 Registering 1 slash command with ${this.slashCommands.length} subcommand(s) (${this.guildId ? 'Guild' : 'Global'})...`
             );
             await rest.put(route, {body: [rootCommand]});
             logger.success(`✅ Slash commands registered successfully.`);
