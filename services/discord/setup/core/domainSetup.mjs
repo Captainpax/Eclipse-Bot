@@ -6,7 +6,7 @@ import {EmbedBuilder} from 'discord.js';
  * hosted.  The user should reply in DM with a plain domain (e.g.
  * `example.com`).
  *
- * @param {import('../../Downloads/discord.mjs').Interaction|import('discord.js').Message} interactionOrMessage
+ * @param {import('discord.js').Interaction|import('discord.js').Message} interactionOrMessage
  * @param {Object} session
  */
 export async function askDomain(interactionOrMessage, session) {
@@ -30,7 +30,7 @@ export async function askDomain(interactionOrMessage, session) {
  * Handles the domain input typed by the user in DM.  Stores the domain in
  * session.choices and then prompts for the port range.
  *
- * @param {import('../../Downloads/discord.mjs').Message} message
+ * @param {import('discord.js').Message} message
  * @param {Object} session
  */
 export async function handleDomainInput(message, session) {
