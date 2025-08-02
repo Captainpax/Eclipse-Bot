@@ -1,29 +1,132 @@
-
----
-
 # 🌒 Eclipse-Bot
 
-A powerful Discord bot designed to host and manage **Archipelago** multiworld servers, handle player queues, create secure game channels, and simplify admin workflows — all from your server.
+Eclipse-Bot is a powerful Discord bot designed to automate and manage **Archipelago** multiworld game servers. It
+provides seamless player coordination, secure game channel handling, and dynamic slash/text command workflows — all
+within your Discord server.
 
 ---
 
-## ⚙️ Features
+## ⚙️ Key Features
 
-- 🔧 **First-time Setup** via DM to guild owner
-- 💬 Slash command registration and command handling
-- 🧍 Player signup queue (`!me`, `!list`)
+- 🔧 First-time setup wizard via DM
+- 💬 Slash + text command handling
+- 🧍 Signup queue system (`!me`, `!list`)
 - 🛠️ Admin channel creation (`!create_channels`)
-- 🏗️ Automatic bootstrapping of required channels (console, logs, waiting-room)
+- 🏗️ Automatic channel bootstrapping
 - 🧑‍⚖️ Role-based permissions (admin/mod/player)
-- 🌐 Custom FQDN + port range assignment for hosted servers
-- 🧠 Guild config persistence
-- ✨ Fully asynchronous, multi-server ready
+- 🌐 Custom FQDN & port range assignment
+- 🧠 MongoDB-backed persistent config
+- 🧩 Archipelago connection support
+- 🐳 Docker-ready deployment
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Quickstart
 
 ### 1. Clone the Repo
+
+```bash
+git clone https://github.com/Captainpax/Eclipse-Bot.git
+cd Eclipse-Bot
+````
+
+### 2. Install Dependencies
+
+```bash
+npm install
+```
+
+### 3. Configure Your Environment
+
+Create a `.env` file based on `example.env`:
+
+```env
+DISCORD_TOKEN=your_discord_token
+DISCORD_CLIENT_ID=your_client_id
+GUILD_ID=your_guild_id
+SUPER_USER_ID=your_discord_user_id
+MONGO_URI=mongodb://...
+MONGO_USER=your_user
+MONGO_PASS=your_pass
+```
+
+### 4. Run the Bot
+
+```bash
+npm start
+```
+
+The bot will:
+
+* Log in
+* Register slash commands
+* DM the SUPER\_USER\_ID for setup
+* Bootstrap required channels
+
+---
+
+## 🧭 Folder Guide
+
+| Folder                                           | Description                                       |
+|--------------------------------------------------|---------------------------------------------------|
+| [`services/`](./services)                        | Bot logic (Discord, Archipelago, commands, setup) |
+| [`services/discord`](./services/discord)         | Core Discord bot components                       |
+| [`services/archipelago`](./services/archipelago) | Handles AP socket connections and host utilities  |
+| [`system/`](./system)                            | Database and logging systems                      |
+
+💡 For detailed breakdowns:
+
+* [services/](./services/README.md)
+* [system/](./system/README.md)
+
+---
+
+## 💬 Commands
+
+### Text Commands (run in waiting-room)
+
+* `!me` — Join the signup queue (must be linked)
+* `!list` — View current signup queue
+* `!create_channels` — Admin-only: sets up game channels
+
+### Slash Commands
+
+Grouped under `/ec`, dynamically loaded from `services/discord/commands/`.
+
+---
+
+## 🛡️ Required Discord Permissions
+
+When adding the bot, grant:
+
+* `Manage Channels`
+* `Manage Roles`
+* `Send Messages`
+* `Read Message History`
+* `Use Slash Commands`
+
+---
+
+## 🧱 Tech Stack
+
+* Node.js 20+
+* Discord.js 14+
+* MongoDB (via Mongoose)
+* Docker support
+* Archipelago.js
+
+---
+
+## 📜 License
+
+MIT — free to use, extend, and deploy. If you build something cool with Eclipse-Bot, let us know!
+
+```
+
+---
+
+Let me know when you're ready and I’ll generate the next-level `README.md` files for `/services`, `/services/discord`, `/services/archipelago`, and `/system`.
+```
 
 ```bash
 git clone https://github.com/yourname/eclipse-bot.git
