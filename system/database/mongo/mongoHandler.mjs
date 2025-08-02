@@ -8,102 +8,14 @@
 
 import mongoose from 'mongoose';
 import logger from '../../log/logHandler.mjs';
+import {playerSchema, serverConfigSchema,} from './mongoSchemas.mjs';
 
 let connection = null;
 let Player = null;
 let Server = null;
 let currentUri = process.env.MONGO_URI || null;
 
-/**
- * Player received items schema
- */
-const receivedItemSchema = new mongoose.Schema({
-    itemName: String,
-    from: String,
-    guildId: String,
-    serverUuid: String,
-    isProgressional: Boolean,
-    timestamp: {type: Date, default: Date.now}
-}, {_id: false});
-
-/**
- * Server reference schema for linked guilds
- */
-const serverRefSchema = new mongoose.Schema({
-    serverUuid: String,
-    serverName: String,
-    role: String,
-    joinedAt: {type: Date, default: Date.now}
-}, {_id: false});
-
-/**
- * Linked guilds schema for players
- */
-const linkedGuildSchema = new mongoose.Schema({
-    guildId: String,
-    roles: [String],
-    servers: [serverRefSchema]
-}, {_id: false});
-
-/**
- * Player schema
- */
-const playerSchema = new mongoose.Schema({
-    _id: String,
-    discordId: {type: String, required: true},
-    linkedGuilds: [linkedGuildSchema],
-    receivedItems: [receivedItemSchema],
-    settings: {
-        notifications: {type: Boolean, default: true},
-        dmOnItem: {type: Boolean, default: true},
-        linked: {type: Boolean, default: true}
-    }
-}, {timestamps: true});
-
-/**
- * Sent item schema for servers
- */
-const sentItemSchema = new mongoose.Schema({
-    itemName: String,
-    message: String,
-    isProgressional: Boolean,
-    fromTo: [String]
-}, {_id: false});
-
-/**
- * Server instance schema
- */
-const serverInstanceSchema = new mongoose.Schema({
-    uuid: String,
-    serverName: String,
-    serverOwner: String,
-    players: [String],
-    port: Number,
-    sentItems: [sentItemSchema]
-}, {_id: false});
-
-/**
- * Guild/server config schema
- */
-const serverConfigSchema = new mongoose.Schema({
-    _id: String,
-    guildId: {type: String, required: true},
-    fqdn: String,
-    bootstrapped: {type: Boolean, default: false},
-    roles: {
-        admin: [String],
-        mod: [String],
-        player: [String]
-    },
-    channels: {
-        category: [String],
-        console: [String],
-        logs: [String],
-        waitingRoom: [String]
-    },
-    portRange: {start: Number, end: Number},
-    servers: [serverInstanceSchema]
-}, {timestamps: true});
+// Schema definitions are imported from mongoSchemas.mjs. See that file for details.
 
 /**
  * Attempts to connect to MongoDB with retry support
@@ -124,7 +36,7 @@ async function tryConnect(uri, retries = 3) {
                 user: mongoUser,
                 pass: mongoPass,
                 serverSelectionTimeoutMS: 5000,
-                connectTimeoutMS: 5000
+                connectTimeoutMS: 5000,
             });
         } catch (err) {
             if (err.message.includes('ENOTFOUND')) {
@@ -135,7 +47,7 @@ async function tryConnect(uri, retries = 3) {
                 logger.error(`🔥 MongoDB connection error (attempt ${i}): ${err.message}`);
             }
             if (i < retries) {
-                await new Promise(res => setTimeout(res, 3000));
+                await new Promise((res) => setTimeout(res, 3000));
                 continue;
             }
             throw err;
@@ -192,7 +104,7 @@ export function getServerModel() {
  * @returns {Promise<Object|null>}
  */
 export async function upsertPlayer(playerId, discordId) {
-    if (!await ensureConnection()) return null;
+    if (!(await ensureConnection())) return null;
     return Player.findByIdAndUpdate(playerId, {discordId}, {upsert: true, new: true});
 }
 
@@ -200,10 +112,10 @@ export async function upsertPlayer(playerId, discordId) {
  * Links a guild and optional roles to a player's profile.
  */
 export async function linkGuildToPlayer(playerId, guildId, roles = []) {
-    if (!await ensureConnection()) return null;
+    if (!(await ensureConnection())) return null;
     const player = await Player.findById(playerId);
     if (!player) return null;
-    let guildLink = player.linkedGuilds.find(g => g.guildId === guildId);
+    let guildLink = player.linkedGuilds.find((g) => g.guildId === guildId);
     if (!guildLink) player.linkedGuilds.push({guildId, roles, servers: []});
     else guildLink.roles = [...new Set([...guildLink.roles, ...roles])];
     return player.save();
@@ -213,10 +125,10 @@ export async function linkGuildToPlayer(playerId, guildId, roles = []) {
  * Adds a player to a server instance.
  */
 export async function addPlayerToServer(playerId, guildId, serverUuid, serverName, role = 'player') {
-    if (!await ensureConnection()) return null;
+    if (!(await ensureConnection())) return null;
     const player = await Player.findById(playerId);
     if (!player) return null;
-    let guildLink = player.linkedGuilds.find(g => g.guildId === guildId);
+    let guildLink = player.linkedGuilds.find((g) => g.guildId === guildId);
     if (!guildLink) {
         guildLink = {guildId, roles: [], servers: []};
         player.linkedGuilds.push(guildLink);
@@ -229,11 +141,8 @@ export async function addPlayerToServer(playerId, guildId, serverUuid, serverNam
  * Logs an item received by a player.
  */
 export async function logReceivedItem(playerId, item) {
-    if (!await ensureConnection()) return null;
-    return Player.findByIdAndUpdate(
-        playerId,
-        {$push: {receivedItems: {...item, timestamp: new Date()}}}
-    );
+    if (!(await ensureConnection())) return null;
+    return Player.findByIdAndUpdate(playerId, {$push: {receivedItems: {...item, timestamp: new Date()}}});
 }
 
 /* SERVER FUNCTIONS */
@@ -242,19 +151,15 @@ export async function logReceivedItem(playerId, item) {
  * Saves or updates a guild/server configuration.
  */
 export async function saveGuildConfig(config) {
-    if (!await ensureConnection()) return null;
-    return Server.findByIdAndUpdate(
-        config.guildId,
-        {...config, _id: config.guildId},
-        {upsert: true, new: true}
-    );
+    if (!(await ensureConnection())) return null;
+    return Server.findByIdAndUpdate(config.guildId, {...config, _id: config.guildId}, {upsert: true, new: true});
 }
 
 /**
  * Retrieves a guild configuration by guild ID.
  */
 export async function getGuildConfig(guildId) {
-    if (!await ensureConnection()) return null;
+    if (!(await ensureConnection())) return null;
     return Server.findById(guildId).lean();
 }
 
@@ -262,7 +167,7 @@ export async function getGuildConfig(guildId) {
  * Adds a server instance to a guild configuration.
  */
 export async function addServerInstance(guildId, serverData) {
-    if (!await ensureConnection()) return null;
+    if (!(await ensureConnection())) return null;
     return Server.findByIdAndUpdate(guildId, {$push: {servers: serverData}}, {new: true});
 }
 
@@ -270,10 +175,10 @@ export async function addServerInstance(guildId, serverData) {
  * Logs an item sent from a server instance.
  */
 export async function logSentItem(guildId, serverUuid, item) {
-    if (!await ensureConnection()) return null;
+    if (!(await ensureConnection())) return null;
     return Server.updateOne(
         {_id: guildId, 'servers.uuid': serverUuid},
-        {$push: {'servers.$.sentItems': item}}
+        {$push: {'servers.$.sentItems': item}},
     );
 }
 
@@ -296,7 +201,7 @@ export const DatabaseHandler = {
     addServerInstance,
     logSentItem,
     // Adding getPlayer ensures DatabaseHandler exposes it
-    getPlayer
+    getPlayer,
 };
 export default DatabaseHandler;
 
@@ -306,6 +211,6 @@ export default DatabaseHandler;
  * @returns {Promise<Object|null>}
  */
 export async function getPlayer(playerId) {
-    if (!await ensureConnection()) return null;
+    if (!(await ensureConnection())) return null;
     return Player.findById(playerId).lean();
 }

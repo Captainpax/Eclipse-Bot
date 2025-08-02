@@ -97,9 +97,19 @@ export class registerCommandHandlers {
             ? Routes.applicationGuildCommands(this.clientId, this.guildId)
             : Routes.applicationCommands(this.clientId);
 
+        // Build a single root command (`/ec`) that holds all subcommands.
+        // Discord expects subcommands to be defined under a parent slash command.
+        const rootCommand = {
+            name: 'ec',
+            description: 'Eclipse‑Bot commands',
+            options: this.slashCommands,
+        };
+
         try {
-            logger.info(`📡 Registering ${this.slashCommands.length} slash command(s) (${this.guildId ? 'Guild' : 'Global'})...`);
-            await rest.put(route, {body: this.slashCommands});
+            logger.info(
+                `📡 Registering 1 slash command with ${this.slashCommands.length} subcommand(s) (${this.guildId ? 'Guild' : 'Global'})...`,
+            );
+            await rest.put(route, {body: [rootCommand]});
             logger.success(`✅ Slash commands registered successfully.`);
         } catch (error) {
             logger.error(`❌ Failed to register slash commands: ${error.message}`);

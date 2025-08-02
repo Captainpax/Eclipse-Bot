@@ -1,12 +1,15 @@
 /**
  * @fileoverview
- * Handles automatic MongoDB setup for Eclipse-Bot:
+ * Handles automatic MongoDB setup for Eclipse‑Bot:
  *   - Deploys a MongoDB container via Docker if requested
- *   - Creates `ecbot-net` network if missing and connects Eclipse-Bot to it
+ *   - Creates `ecbot-net` network if missing and connects Eclipse‑Bot to it
  *   - Persists credentials in `.env` to avoid regeneration on restart
  *   - Waits for container to become healthy before proceeding
  *   - Binds port 27017 to host for external debug tools
- *   - Updates process.env with the new Mongo URI
+ *   - Updates process.env with the new Mongo URI and DB name
+ *
+ * This version pulls MongoDB 8 instead of 6 and uses the `ecbot` database name
+ * to align with the updated Mongo handler and schema structure.
  */
 
 import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} from 'discord.js';
@@ -31,12 +34,12 @@ async function safeReply(interaction, payload) {
 export async function askDatabaseSetup(interaction, session) {
     const embed = new EmbedBuilder()
         .setTitle('📦 Database Setup')
-        .setDescription('Choose how you want to configure MongoDB.\\n\\n🔧 **Docker**: Let me deploy Mongo automatically.\\n📝 **Manual**: You enter your own Mongo URI.')
+        .setDescription('Choose how you want to configure MongoDB.\n\n🔧 **Docker**: Let me deploy Mongo automatically.\n📝 **Manual**: You enter your own Mongo URI.')
         .setColor(0x3498db);
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('setup_db_docker').setLabel('Use Docker').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('setup_db_manual').setLabel('Enter URI').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('setup_db_manual').setLabel('Enter URI').setStyle(ButtonStyle.Secondary),
     );
 
     await safeReply(interaction, {embeds: [embed], components: [row], ephemeral: true});
@@ -46,7 +49,7 @@ export async function askMongoUri(interaction, session) {
     session.step = 'await_mongo_uri';
     const embed = new EmbedBuilder()
         .setTitle('📝 Manual MongoDB Configuration')
-        .setDescription('Please paste your MongoDB connection URI below.\\nExample: `mongodb://user:pass@host:port/dbname`')
+        .setDescription('Please paste your MongoDB connection URI below.\nExample: `mongodb://user:pass@host:port/dbname`')
         .setColor(0xe67e22);
 
     await safeReply(interaction, {embeds: [embed], ephemeral: true});
@@ -58,7 +61,7 @@ export async function askMongoUri(interaction, session) {
 }
 
 function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitForMongoHealthy(container, retries = 5) {
@@ -79,24 +82,24 @@ async function waitForMongoHealthy(container, retries = 5) {
 async function ensureBotOnNetwork(docker, networkName) {
     try {
         const containers = await docker.listContainers({all: true});
-        const botContainer = containers.find(c => c.Names.some(n => n.includes('eclipse-bot')));
+        const botContainer = containers.find((c) => c.Names.some((n) => n.includes('eclipse-bot')));
         if (!botContainer) {
-            logger.warn(`[DOCKER-NET] Eclipse-Bot container not found, skipping auto-network join.`);
+            logger.warn(`[DOCKER-NET] Eclipse‑Bot container not found, skipping auto-network join.`);
             return;
         }
 
         const net = docker.getNetwork(networkName);
         const inspect = await net.inspect();
 
-        if (inspect.Containers && Object.values(inspect.Containers).some(c => c.Name.includes('eclipse-bot'))) {
-            logger.info(`[DOCKER-NET] Eclipse-Bot already connected to ${networkName}.`);
+        if (inspect.Containers && Object.values(inspect.Containers).some((c) => c.Name.includes('eclipse-bot'))) {
+            logger.info(`[DOCKER-NET] Eclipse‑Bot already connected to ${networkName}.`);
             return;
         }
 
         await net.connect({Container: botContainer.Id});
-        logger.info(`[DOCKER-NET] Connected Eclipse-Bot container to ${networkName}.`);
+        logger.info(`[DOCKER-NET] Connected Eclipse‑Bot container to ${networkName}.`);
     } catch (err) {
-        logger.warn(`[DOCKER-NET] Could not attach Eclipse-Bot to ${networkName}: ${err.message}`);
+        logger.warn(`[DOCKER-NET] Could not attach Eclipse‑Bot to ${networkName}: ${err.message}`);
     }
 }
 
@@ -118,11 +121,12 @@ export async function handleDockerMongo(interaction, session) {
         logger.info('🔑 Using existing Mongo credentials from .env');
     }
 
-    const mongoDb = 'eclipse-bot';
+    // Use the same default DB name as mongoHandler
+    const mongoDb = 'ecbot';
 
     try {
         const networks = await docker.listNetworks();
-        if (!networks.find(n => n.Name === networkName)) {
+        if (!networks.find((n) => n.Name === networkName)) {
             await docker.createNetwork({Name: networkName, Driver: 'bridge'});
             logger.info(`🌐 Created Docker network: ${networkName}`);
         }
@@ -134,10 +138,11 @@ export async function handleDockerMongo(interaction, session) {
     await safeReply(interaction, {content: '📥 Pulling MongoDB image...', ephemeral: true});
 
     try {
+        // Pull MongoDB 8 image
         await new Promise((resolve, reject) => {
-            docker.pull('mongo:6', (err, stream) => {
+            docker.pull('mongo:8', (err, stream) => {
                 if (err) return reject(err);
-                docker.modem.followProgress(stream, err => (err ? reject(err) : resolve()));
+                docker.modem.followProgress(stream, (err) => (err ? reject(err) : resolve()));
             });
         });
         logger.info('✅ Mongo image pulled.');
@@ -151,41 +156,43 @@ export async function handleDockerMongo(interaction, session) {
         await old.remove({force: true, v: true});
         logger.info('♻️ Removed existing Mongo container and volumes');
     } catch (_) {
+        // ignore if container does not exist
     }
 
+    // Create and start the new Mongo 8 container
     const container = await docker.createContainer({
         name: containerName,
-        Image: 'mongo:6',
+        Image: 'mongo:8',
         Env: [
             `MONGO_INITDB_ROOT_USERNAME=${mongoUser}`,
-            `MONGO_INITDB_ROOT_PASSWORD=${mongoPass}`
+            `MONGO_INITDB_ROOT_PASSWORD=${mongoPass}`,
         ],
         HostConfig: {
             RestartPolicy: {Name: 'always'},
             NetworkMode: networkName,
             PortBindings: {
-                '27017/tcp': [{HostPort: hostPort.toString()}]
-            }
+                '27017/tcp': [{HostPort: hostPort.toString()}],
+            },
         },
         ExposedPorts: {
-            '27017/tcp': {}
+            '27017/tcp': {},
         },
         NetworkingConfig: {
             EndpointsConfig: {
-                [networkName]: {Aliases: [containerName]}
-            }
+                [networkName]: {Aliases: [containerName]},
+            },
         },
         Healthcheck: {
             Test: ['CMD-SHELL', 'echo "db.stats().ok" | mongosh localhost/test --quiet'],
-            Interval: 1000000000,
-            Timeout: 3000000000,
-            Retries: 5
-        }
+            Interval: 1_000_000_000,
+            Timeout: 3_000_000_000,
+            Retries: 5,
+        },
     });
     await container.start();
     logger.info('🚀 Mongo container started with port binding 27017 -> host 27017.');
 
-    await waitForMongoHealthy(container).catch(err => {
+    await waitForMongoHealthy(container).catch((err) => {
         logger.error(`❌ Mongo did not become healthy: ${err.message}`);
     });
 
@@ -195,15 +202,17 @@ export async function handleDockerMongo(interaction, session) {
     const envPath = path.resolve(process.cwd(), '.env');
     let envContents = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
     envContents = envContents.replace(/MONGO_URI=.*/g, '').trim();
-    envContents += `\\nMONGO_URI=${newUri}\\nMONGO_USER=${mongoUser}\\nMONGO_PASS=${mongoPass}\\n`;
+    envContents = envContents.replace(/MONGO_DB_NAME=.*/g, '').trim();
+    envContents += `\nMONGO_URI=${newUri}\nMONGO_DB_NAME=${mongoDb}\nMONGO_USER=${mongoUser}\nMONGO_PASS=${mongoPass}\n`;
     fs.writeFileSync(envPath, envContents);
 
     process.env.MONGO_URI = newUri;
+    process.env.MONGO_DB_NAME = mongoDb;
     process.env.MONGO_USER = mongoUser;
     process.env.MONGO_PASS = mongoPass;
     session.choices.mongoUri = newUri;
 
-    logger.info('✅ Mongo URI and credentials written to .env');
+    logger.info('✅ Mongo URI, DB name, and credentials written to .env');
 
     await safeReply(interaction, {content: '✅ Mongo container deployed and connecting...', ephemeral: true});
 
