@@ -2,17 +2,17 @@ import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} from 'discor
 import dotenv from 'dotenv';
 import logger from '../../system/log/logHandler.mjs';
 
-import {handleServerSelection} from './setup/serverSelection.mjs';
-import {handleCategoryChoice, handleCategorySelection} from './setup/categorySelection.mjs';
-import {askDatabaseSetup, askMongoUri, handleDockerMongo} from './setup/databaseSetup.mjs';
+import {handleServerSelection} from './setup/core/serverSelection.mjs';
+import {handleCategoryChoice, handleCategorySelection} from './setup/core/categorySelection.mjs';
+import {askDatabaseSetup, askMongoUri, handleDockerMongo} from './setup/core/databaseSetup.mjs';
 import {
     askRoles,
     autoCreateRoles,
     handleModRoleSelected,
     handlePlayerRoleSelected,
     pickExistingRoles
-} from './setup/rolesSetup.mjs';
-import {confirmConfig, finalizeConfig} from './setup/finalizeConfig.mjs';
+} from './setup/guild/rolesSetup.mjs';
+import {confirmConfig, finalizeConfig} from './setup/core/finalizeConfig.mjs';
 
 dotenv.config({override: true});
 
