@@ -1,4 +1,4 @@
-import {EmbedBuilder} from '../../Downloads/discord.mjs';
+import {EmbedBuilder} from 'discord.js';
 
 /**
  * Prompts the user to provide a domain name for Eclipse‑Bot.  The domain

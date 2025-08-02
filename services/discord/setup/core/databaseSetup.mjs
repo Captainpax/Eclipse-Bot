@@ -1,4 +1,4 @@
-import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} from '../../Downloads/discord.mjs';
+import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} from 'discord.js';
 
 /**
  * Presents the user with a choice between provisioning a MongoDB instance via

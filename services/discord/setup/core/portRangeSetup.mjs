@@ -1,4 +1,4 @@
-import {EmbedBuilder} from '../../Downloads/discord.mjs';
+import {EmbedBuilder} from 'discord.js';
 
 /**
  * Prompts the user to specify a port or a range of ports for Eclipse‑Bot to

@@ -1,4 +1,4 @@
-import {ActionRowBuilder, EmbedBuilder, StringSelectMenuBuilder} from '../../Downloads/discord.mjs';
+import {ActionRowBuilder, EmbedBuilder, StringSelectMenuBuilder} from 'discord.js';
 
 /**
  * Presents a select menu listing all guilds the bot is currently a member of

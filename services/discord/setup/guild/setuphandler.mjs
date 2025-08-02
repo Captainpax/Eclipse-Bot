@@ -1,6 +1,6 @@
 import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} from 'discord.js';
 import dotenv from 'dotenv';
-import logger from '../../system/log/logHandler.mjs';
+import logger from '../../../../system/log/logHandler.mjs';
 
 // New setup flow imports.  These modules handle each discrete step of the core
 // setup wizard.  They encapsulate the logic for prompting the user, capturing

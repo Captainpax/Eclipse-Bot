@@ -2,12 +2,7 @@ import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} from 'discor
 
 /**
  * Starts the guild setup flow by asking the administrator how they would like
- * to handle roles.  The two options presented are to create fresh roles
- * automatically or to select from existing roles within the guild.
- *
- * @param {import('discord.js').CommandInteraction|import('discord.js').ButtonInteraction} interaction
- * @param {Object} session
- * @param {import('discord.js').Client} client
+ * to handle roles.
  */
 export async function startGuildRoleSetup(interaction, session, client) {
     const embed = new EmbedBuilder()
@@ -18,39 +13,36 @@ export async function startGuildRoleSetup(interaction, session, client) {
             {name: 'Use existing roles', value: 'Select roles that already exist in your server.'}
         )
         .setColor(0x3498db);
+
     const autoButton = new ButtonBuilder()
-        .setCustomId('guild_roles_autocreate')
+        .setCustomId('guild_roles_choice:autocreate')
         .setLabel('Create new')
         .setStyle(ButtonStyle.Primary);
     const existingButton = new ButtonBuilder()
-        .setCustomId('guild_roles_existing')
+        .setCustomId('guild_roles_choice:existing')
         .setLabel('Use existing')
         .setStyle(ButtonStyle.Secondary);
+
     const row = new ActionRowBuilder().addComponents(autoButton, existingButton);
-    // We respond to the interaction here; if it has been deferred or replied,
-    // followUp is used instead of reply
+
     if (interaction.replied || interaction.deferred) {
         await interaction.followUp({embeds: [embed], components: [row], flags: 64});
     } else {
         await interaction.reply({embeds: [embed], components: [row], flags: 64});
     }
+
     session.step = 'guild_role_selection';
 }
 
-/**
- * Handles the user's choice of role creation versus selecting existing roles.
- * Delegates to either the role creation or role picking modules accordingly.
- *
- * @param {import('discord.js').ButtonInteraction} interaction
- * @param {Object} session
- * @param {import('discord.js').Client} client
- */
 export async function handleRoleSelectionChoice(interaction, session, client) {
-    if (interaction.customId === 'guild_roles_autocreate') {
+    const [, choice] = interaction.customId.split(':');
+
+    if (choice === 'autocreate') {
         const {autoCreateRoles} = await import('./roleCreation.mjs');
         return autoCreateRoles(interaction, session, client);
     }
-    if (interaction.customId === 'guild_roles_existing') {
+
+    if (choice === 'existing') {
         const {askPickModRole} = await import('./rolePicking.mjs');
         return askPickModRole(interaction, session);
     }

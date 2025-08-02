@@ -1,10 +1,4 @@
-import {
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
-    EmbedBuilder,
-    StringSelectMenuBuilder
-} from '../../Downloads/discord.mjs';
+import {ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder} from 'discord.js';
 
 /**
  * Prompts the user to select an existing category for the admin panel or to
